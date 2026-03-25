@@ -352,7 +352,7 @@
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
 
-                    $display("%2d %2d  eta=%8.4f eta2=%8.4f  Z=%8.4f g2=%8.4f sqrt=%8.4f coef=%8.4f t=%8.4f zx=%8.4f zy=%8.4f",
+                    /*$display("%2d %2d  eta=%8.4f eta2=%8.4f  Z=%8.4f g2=%8.4f sqrt=%8.4f coef=%8.4f t=%8.4f zx=%8.4f zy=%8.4f",
                         x_idx,
                         y_idx,
                         $itor(eta) / 4096.0,
@@ -364,7 +364,7 @@
                         $itor(t) / 4096.0,
                         $itor($unsigned(z_x)) / 4096.0,
                         $itor($unsigned(z_y)) / 4096.0
-                    );
+                    );*/
                 end
 
                 4'd9: begin // FINISH
