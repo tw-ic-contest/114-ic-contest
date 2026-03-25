@@ -310,6 +310,8 @@
                 4'd0: begin // INIT
                     iteration <= 9'd0;
                     DONE <= 1'b0;
+                    eta <= eta_w[27:12];
+                    eta2 <= eta2_w;
                 end
 
                 4'd1: begin // GET_COOR
@@ -328,8 +330,6 @@
                     gx <= gx_w[15:0];
                     gy <= gy_w[15:0];
                     kgg <= kgg_w;
-                    eta <= eta_w[27:12];
-                    eta2 <= eta2_w;
                     // 1 / RI
                     // eta * eta
                 end    
