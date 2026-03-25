@@ -16,7 +16,7 @@ set_wire_load_model -name tsmc13_wl10 -library slow
 source -echo -verbose ${DESIGN}.sdc
 set_fix_hold                [all_clocks]
 check_design
-set high_fanout_net_threshold 0
+# set high_fanout_net_threshold 0
 uniquify
 set_fix_multiple_port_nets -all -buffer_constants [get_designs *]
 #set_max_area 0
