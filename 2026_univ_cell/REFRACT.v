@@ -129,33 +129,33 @@ module REFRACT(
                 COMP_KGG: begin
                     g2 <= ((gx * gx) >>> 12) + ((gy * gy) >>> 12) + 17'sd4096;
                     // kgg = g2 - eta^2*(g2-1) = g2*(1-eta2) + eta2
-                    kgg <= g2 - (((eta2 * g2) >>> 12) - {1'b0, eta2}); [cite: 154]
+                    kgg <= g2 - (((eta2 * g2) >>> 12) - {1'b0, eta2});
                 end
                 COMP_SQRT: begin
                     sqrt_kgg_r <= sqrt_out[15:0];
                 end
                 COMP_COEF: begin
-                    coef <= div_q[16:0]; [cite: 154]
+                    coef <= div_q[16:0];
                 end
                 COMP_T: begin
-                    t <= div_q[16:0]; [cite: 155]
+                    t <= div_q[16:0];
                 end
                 COMP_ZXY: begin
-                    z_x <= big_x + (((t * coef) >>> 12) * gx >>> 12); [cite: 157]
-                    z_y <= big_y + (((t * coef) >>> 12) * gy >>> 12); [cite: 158]
+                    z_x <= big_x + (((t * coef) >>> 12) * gx >>> 12);
+                    z_y <= big_y + (((t * coef) >>> 12) * gy >>> 12);
                 end
                 WRITE_X: begin
                     SRAM_WE <= 1'b1;
                     SRAM_A <= iteration << 1;
-                    SRAM_D <= z_x[15:0]; [cite: 162, 170]
+                    SRAM_D <= z_x[15:0];
                 end
                 WRITE_Y: begin
                     SRAM_WE <= 1'b1;
                     SRAM_A <= (iteration << 1) + 9'd1;
-                    SRAM_D <= z_y[15:0]; [cite: 162, 170]
+                    SRAM_D <= z_y[15:0];
                 end
                 FINISH: begin
-                    DONE <= 1'b1; [cite: 69, 93]
+                    DONE <= 1'b1;
                     SRAM_WE <= 1'b0;
                 end
             endcase
