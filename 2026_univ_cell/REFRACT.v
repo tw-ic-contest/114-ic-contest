@@ -323,31 +323,34 @@
                 
                 4'd3: begin //COMPUTING_2
                     sqrt_kgg_r <= sqrt_kgg_w[15:0];
-                    coef <= coef_w[16:0];
                 end
 
                 4'd4: begin //COMPUTING_3
+                    coef <= coef_w[16:0];
+                end
+
+                4'd5: begin //COMPUTING_4
                     t <= t_w[16:0];
                 end            
                             
-                4'd5: begin //COMPUTING_4
+                4'd6: begin //COMPUTING_4
                     z_x <= z_x_w;
                     z_y <= z_y_w;
                 end
 
-                4'd6: begin // WRITE_X
+                4'd7: begin // WRITE_X
                     SRAM_WE <= 1'b1;
                     SRAM_A <= iteration << 1;
                     SRAM_D <= z_x[15:0];
                 end
 
-                4'd7: begin // WRITE_Y
+                4'd8: begin // WRITE_Y
                     SRAM_WE <= 1'b1;
                     SRAM_A <= (iteration << 1) + 9'd1;
                     SRAM_D <= z_y[15:0];
                 end
 
-                4'd8: begin // NEXT
+                4'd9: begin // NEXT
                     SRAM_WE <= 1'b0;
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
@@ -367,7 +370,7 @@
                     );*/
                 end
 
-                4'd9: begin // FINISH
+                4'd10: begin // FINISH
                     SRAM_WE <= 1'b0;
                     DONE <= 1'b1;
                 end
@@ -391,8 +394,9 @@
             4'd5: next_state = 4'd6; 
             4'd6: next_state = 4'd7;
             4'd7: next_state = 4'd8;
-            4'd8: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1;
-            4'd9: next_state = 4'd9;
+            4'd8: next_state = 4'd9;
+            4'd9: next_state = (iteration == 9'd255) ? 4'd10 : 4'd1;
+            4'd10: next_state = 4'd9;
             default: next_state = 4'd0;
         endcase
     end
