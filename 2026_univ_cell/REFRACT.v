@@ -286,7 +286,21 @@
             z_y <= 17'd0;
             big_z <= 16'd0;
             
-            //add all the variables later
+            gx <= 16'd0;
+            gy <= 16'd0;
+            gx2 <= 16'd0;
+            gy2 <= 16'd0;
+            g2 <= 17'd0;
+            eta <= 16'd0;
+            eta2 <= 16'd0;
+            kgg <= 32'd0;
+            sqrt_kgg_r <= 16'd0;
+            coef <= 17'd0;
+            t <= 17'd0;
+            x8 <= 16'd0;
+            y8 <= 16'd0;
+            big_x <= 17'd0;
+            big_y <= 17'd0;
 
         end
         else begin
