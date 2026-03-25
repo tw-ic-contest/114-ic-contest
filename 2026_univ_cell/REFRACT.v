@@ -12,7 +12,6 @@ module REFRACT(
 
 reg [3:0] state;
 reg [3:0] next_state;
-reg [3:0] read_ri;
 reg [8:0] iteration;
 reg [3:0] x_idx;
 reg [3:0] y_idx;
@@ -22,36 +21,140 @@ reg signed [16:0] big_y;
 
 reg signed [15:0] x8; // 2 * ((X - 8) / 8) ^ 8
 reg signed [15:0] y8; // 2 * ((Y - 8) / 8) ^ 8
-reg signed [15:0] big_z; // z = 6 - 2 * ((X - 8) / 8) ^ 8 - 2 * ((Y - 8) / 8) ^ 8
+reg signed [16:0] big_z; // z = 6 - 2 * ((X - 8) / 8) ^ 8 - 2 * ((Y - 8) / 8) ^ 8
 
 reg signed [15:0] gx; // 2 * ((X - 8) / 8) ^ 7
 reg signed [15:0] gy; // 2 * ((X - 8) / 8) ^ 7
 reg [15:0] gx2; // gx ^ 2
 reg [15:0] gy2; // gy ^ 2
-reg [16:0] g2; // g ^ 2 = gx ^ 2 + gy ^ 2 + 1
+reg signed [16:0] g2; // g ^ 2 = gx ^ 2 + gy ^ 2 + 1
 
 reg [15:0] eta;
 reg [15:0] eta2;
 
 reg signed [31:0] kgg;
-reg signed [15:0] sqrt_kgg;
-reg signed [16:0] eta_m_sqrt_kgg;
+reg signed [15:0] sqrt_kgg_r;
 reg signed [16:0] coef; 
-reg signed [16:0] eta_m_coef;ength
-reg signed [16:0] t; //length
+reg signed [16:0] t;
 
-reg [15:0] z_x;
-reg [15:0] z_y;
+reg signed [15:0] z_x;
+reg signed [15:0] z_y;
+
+// -----------------------------
+// combinational helper wires
+// -----------------------------
+wire signed [16:0] big_z_w;
+wire signed [16:0] g2_w;
+
+wire signed [33:0] mul_eta2_g2_w;
+wire signed [16:0] eta2_g2_q412_w;
+wire signed [31:0] kgg_w;
+
+wire signed [16:0] eta_m_sqrt_kgg_w;
+wire signed [16:0] eta_m_coef_w;
+
+wire signed [31:0] sqrt_in_w;
+wire [31:0] sqrt_kgg_w;
+
+wire signed [31:0] coef_num_w;
+wire signed [31:0] coef_den_w;
+wire signed [31:0] coef_w;
+
+wire signed [31:0] t_num_w;
+wire signed [31:0] t_den_w;
+wire signed [31:0] t_w;
+
+wire signed [33:0] t_mul_coef_w;
+wire signed [16:0] t_coef_q412_w;
+
+wire signed [33:0] gx_mul_t_mul_coef_w;
+wire signed [33:0] gy_mul_t_mul_coef_w;
+wire signed [16:0] gx_t_coef_q412_w;
+wire signed [16:0] gy_t_coef_q412_w;
+
+wire signed [16:0] z_x_w;
+wire signed [16:0] z_y_w;
 
 
-DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
-U_DIV (.a(eta_m_sqrt_kgg), .b(g2), .quotient(coef), .remainder());
+// -----------------------------
+// stage-A combinational wires
+// get big_z, g2, and kgg
+// -----------------------------
+assign big_z_w = 17'sd24576 - $signed({1'b0, x8}) - $signed({1'b0, y8}); // Z = 6 - x8 - y8
 
-DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
-U_DIV (.a(big_z), .b(eta_m_coef), .quotient(t), .remainder());
+assign g2_w = $signed({1'b0, gx2}) + $signed({1'b0, gy2}) + 17'sd4096; // g^2 = gx^2 + gy^2 + 1
+
+assign mul_eta2_g2_w = $signed(eta2) * $signed(g2_w); // eta2 * g2 (Q4.12 * Q4.12 = Q8.24)
+
+assign eta2_g2_q412_w = mul_eta2_g2_w >>> 12; // eta2 * g2 (back to Q4.12)
+
+assign kgg_w = g2_w - eta2_g2_q412_w + 17'sd4096; // kgg = g2 - eta2 * g2 + 1
+
+
+
+// -----------------------------
+// sqrt
+// get sqrt_kgg
+// input shift so sqrt output stays around Q4.12
+// -----------------------------
+assign sqrt_in_w = kgg_w <<< 12; //shift to Q8.24 before sqrt
 
 DW_sqrt #(.width(32), .tc_mode(0)) 
-U_SQRT (.a(kgg), .root(sqrt_kgg));
+U_SQRT (.a(sqrt_in_w), .root(sqrt_kgg_w));
+
+
+
+// -----------------------------
+// coef divider
+// coef = (eta - sqrt_kgg) / g2
+// keep quotient in Q4.12 => numerator << 12
+// -----------------------------
+
+assign eta_m_sqrt_kgg_w = $signed({1'b0, eta}) - $signed({1'b0, sqrt_kgg_r}); // eta - sqrt_kgg
+
+assign coef_num_w = $signed(eta_m_sqrt_kgg_w) <<< 12; //shift for numeration of divider (Q4.12 -> Q8.24)
+
+assign coef_den_w = $signed({{15{g2[16]}}, g2}); // assign g^2 for denominator
+
+DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
+U_DIV1 (.a(coef_num_w), .b(coef_den_w), .quotient(coef_w), .remainder());
+
+
+// -----------------------------
+// t divider
+// t = big_z / (eta - coef)
+// keep quotient in Q4.12 => numerator << 12
+// -----------------------------
+assign eta_m_coef_w = $signed({1'b0, eta}) - $signed(coef); // eta - coef
+
+assign t_num_w = $signed(big_z) <<< 12;
+
+assign t_den_w = $signed(eta_m_coef_w);
+
+DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
+U_DIV2 (.a(t_num_w), .b(t_den_w), .quotient(t_w), .remainder());
+
+
+
+// -----------------------------
+// final zx / zy
+// z = big_x/y + t * coef * g
+// multiply twice, each time >> 12
+// -----------------------------
+assign t_mul_coef_w   = $signed(t) * $signed(coef); // t * coef
+assign t_coef_q412_w  = t_mul_coef_w >>> 12; // Q8.24 -> Q4.12
+
+assign gx_mul_t_mul_coef_w = $signed(t_coef_q412_w) * $signed(gx); // t * coef * gx
+assign gy_mul_t_mul_coef_w = $signed(t_coef_q412_w) * $signed(gy); // t * coef * gy
+
+assign gx_t_coef_q412_w = gx_mul_t_mul_coef_w >>> 12; // Q8.24 -> Q4.12
+assign gy_t_coef_q412_w = gy_mul_t_mul_coef_w >>> 12; // Q8.24 -> Q4.12
+
+assign z_x_w = big_x + gx_t_coef_q412_w;
+assign z_y_w = big_y + gy_t_coef_q412_w;
+
+
+
 
 always @(posedge CLK or posedge RST) begin
     if (RST) begin
@@ -60,7 +163,6 @@ always @(posedge CLK or posedge RST) begin
         SRAM_D  <= 16'd0;
         SRAM_WE <= 1'd0;
         DONE    <= 1'd0;
-        read_ri <= 4'd0;
         iteration <= 9'd0;
         x_idx <= 4'd0;
         y_idx <= 4'd0;
@@ -76,7 +178,6 @@ always @(posedge CLK or posedge RST) begin
 
         case (state)
             4'd0: begin // INIT
-                read_ri <= RI;
                 iteration <= 9'd0;
                 DONE <= 1'b0;
             end
@@ -84,54 +185,51 @@ always @(posedge CLK or posedge RST) begin
             4'd1: begin // GET_COOR
                 x_idx <= iteration[3:0];
                 y_idx <= iteration[7:4];
+
                 big_x <= $signed({1'b0, iteration[3:0], 12'd0}); // x * 4096, Q4.12
                 big_y <= $signed({1'b0, iteration[7:4], 12'd0}); // y * 4096, Q4.12
             end
 
             4'd2: begin // COMPUTING
-                big_z <= {4'd6, 12'd0} - x8 - y8;
-                g2 <= gx2 + gy2 + {4'd1, 12'd0};
+                big_z <= big_z_w;
+                g2    <= g2_w;
+                kgg   <= kgg_w;
             end    
                
                
             4'd3: begin //COMPUTING_2
-                kgg <= g2 - eta2 * g2 + {4'd1, 12'd0};
-                //sqrt(kgg)
+                sqrt_kgg_r <= sqrt_kgg_w[15:0];
+                coef       <= coef_w[16:0];
             end
 
             4'd4: begin //COMPUTING_3
-                eta_m_sqrt_kgg <= eta - sqrt_kgg;
-                //coef
+                t   <= t_w[16:0];
             end            
-
-            4'd5: begin //COMPUTING_4
-                eta_m_coef <= eta - coef;
-                //t
-            end           
                         
-            4'd6: begin //COMPUTING_5
-                z_x <= big_x + t * coef * gx;
-                z_y <= big_y + t * coef * gy;
+            4'd5: begin //COMPUTING_4
+                z_x <= z_x_w[15:0];
+                z_y <= z_y_w[15:0];
             end
 
-            4'd7: begin // WRITE_X
+            4'd6: begin // WRITE_X
                 SRAM_WE <= 1'b1;
                 SRAM_A <= iteration << 1;
                 SRAM_D <= z_x;
             end
 
-            4'd8: begin // WRITE_Y
+            4'd7: begin // WRITE_Y
                 SRAM_WE <= 1'b1;
                 SRAM_A <= (iteration << 1) + 9'd1;
                 SRAM_D <= z_y;
             end
 
-            4'd9: begin // NEXT
+            4'd8: begin // NEXT
                 SRAM_WE <= 1'b0;
-                iteration <= iteration + 9'd1;
+                if (iteration != 9'd255)
+                    iteration <= iteration + 9'd1;
             end
 
-            4'd10: begin // FINISH
+            4'd9: begin // FINISH
                 SRAM_WE <= 1'b0;
                 DONE <= 1'b1;
             end
@@ -141,8 +239,23 @@ always @(posedge CLK or posedge RST) begin
             end
         endcase
 
-        //$display("t=%0t | state=%0d iter=%0d | A=%0d Q=%0d | D=%0d WE=%0d DONE=%0d",
-        //         $time, state, iteration, SRAM_A, SRAM_Q, SRAM_D, SRAM_WE, DONE);
+        $display("t=%0t | state=%0d iter=%0d (x=%0d y=%0d) | \
+        kgg=%0d sqrt=%0d coef=%0d t=%0d | \
+        zx=%0d zy=%0d | WE=%0d DONE=%0d",
+            $time,
+            state,
+            iteration,
+            x_idx,
+            y_idx,
+            kgg,
+            sqrt_kgg_r,
+            coef,
+            t,
+            z_x,
+            z_y,
+            SRAM_WE,
+            DONE
+        );
     end
 end
 
@@ -328,9 +441,8 @@ always @(*) begin
         4'd5: next_state = 4'd6; 
         4'd6: next_state = 4'd7;
         4'd7: next_state = 4'd8;
-        4'd8: next_state = 4'd9;
-        4'd9: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1;
-        4'd10: next_state = 4'd10;
+        4'd8: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1;
+        4'd9: next_state = 4'd9;
         default: next_state = 4'd0;
     endcase
 end
