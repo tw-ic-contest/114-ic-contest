@@ -21,6 +21,9 @@ vcs -R tb.v REFRACT.v -sverilog -full64 +define+RI=5 +access+r +vcs+fsdbon +fsdb
 #####################
 #Gate-Level simuation
 #####################
+vcs -R tb.v REFRACT.v -sverilog -full64 +define+RI=5 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb  -y /usr/cad/synopsys/synthesis/cur/dw/sim_ver +incdir+/usr/cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v -debug_access+
+
+
 # vcs -R  tb.v REFRACT_syn.v +define+SDF+RI=2 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb -v /cad/CBDK/CBDK_IC_Contest_v2.5/Verilog/tsmc13_neg.v +maxdelays +neg_tchk
 # vcs -R  tb.v REFRACT_syn.v +define+SDF+RI=3 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb -v /cad/CBDK/CBDK_IC_Contest_v2.5/Verilog/tsmc13_neg.v +maxdelays +neg_tchk
 # vcs -R  tb.v REFRACT_syn.v +define+SDF+RI=4 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb -v /cad/CBDK/CBDK_IC_Contest_v2.5/Verilog/tsmc13_neg.v +maxdelays +neg_tchk
