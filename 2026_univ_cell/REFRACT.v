@@ -1,4 +1,4 @@
-    module REFRACT(
+module REFRACT(
         input  wire        CLK,
         input  wire        RST,
         input  wire [3:0]  RI,   
@@ -57,6 +57,12 @@
     wire signed [33:0] mul_eta2_g2_w;
     wire signed [16:0] eta2_g2_q412_w;
     wire signed [31:0] kgg_w;
+
+    wire signed [16:0] big_z_r_w;
+    wire signed [16:0] g2_r_w;
+    wire signed [33:0] mul_eta2_g2_r_w;
+    wire signed [16:0] eta2_g2_q412_r_w;
+    wire signed [31:0] kgg_r_w;
 
     wire signed [16:0] eta_m_sqrt_kgg_w;
     wire signed [16:0] eta_m_coef_w;
@@ -206,6 +212,12 @@
 
     assign kgg_w = g2_w - eta2_g2_q412_w + $signed({1'b0, eta2_w}); // kgg = g2 - eta2 * g2 + eta2
 
+    assign big_z_r_w = 17'sd24576 - $signed({1'b0, x8}) - $signed({1'b0, y8}); // Z = 6 - x8 - y8
+    assign g2_r_w = $signed(gx2) + $signed(gy2) + 17'sd4096; // g^2 = gx^2 + gy^2 + 1
+    assign mul_eta2_g2_r_w = $signed({1'b0, eta2}) * $signed(g2_r_w); // eta2 * g2
+    assign eta2_g2_q412_r_w = mul_eta2_g2_r_w >>> 12; // eta2 * g2 (back to Q4.12)
+    assign kgg_r_w = g2_r_w - eta2_g2_q412_r_w + $signed({1'b0, eta2}); // kgg = g2 - eta2 * g2 + eta2
+
 
 
     // -----------------------------
@@ -323,45 +335,50 @@
                 end
 
                 4'd2: begin // COMPUTING
-                    big_z <= big_z_w;
-                    x8 <= x8_w;
-                    y8 <= y8_w;
-                    g2 <= g2_w;
+                    x8 <= x8_w[15:0];
+                    y8 <= y8_w[15:0];
                     gx <= gx_w[15:0];
                     gy <= gy_w[15:0];
-                    kgg <= kgg_w;
+                    gx2 <= gx2_w[15:0];
+                    gy2 <= gy2_w[15:0];
                     // 1 / RI
                     // eta * eta
                 end    
                 
                 
                 4'd3: begin //COMPUTING_2
+                    big_z <= big_z_r_w;
+                    g2 <= g2_r_w;
+                    kgg <= kgg_r_w;
+                end
+
+                4'd4: begin //COMPUTING_3
                     sqrt_kgg_r <= sqrt_kgg_w[15:0];
                     coef <= coef_w[16:0];
                 end
 
-                4'd4: begin //COMPUTING_3
+                4'd5: begin //COMPUTING_4
                     t <= t_w[16:0];
                 end            
                             
-                4'd5: begin //COMPUTING_4
+                4'd6: begin //COMPUTING_5
                     z_x <= z_x_w;
                     z_y <= z_y_w;
                 end
 
-                4'd6: begin // WRITE_X
+                4'd7: begin // WRITE_X
                     SRAM_WE <= 1'b1;
                     SRAM_A <= iteration << 1;
                     SRAM_D <= z_x[15:0];
                 end
 
-                4'd7: begin // WRITE_Y
+                4'd8: begin // WRITE_Y
                     SRAM_WE <= 1'b1;
                     SRAM_A <= (iteration << 1) + 9'd1;
                     SRAM_D <= z_y[15:0];
                 end
 
-                4'd8: begin // NEXT
+                4'd9: begin // NEXT
                     SRAM_WE <= 1'b0;
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
@@ -381,7 +398,7 @@
                     );*/
                 end
 
-                4'd9: begin // FINISH
+                4'd10: begin // FINISH
                     SRAM_WE <= 1'b0;
                     DONE <= 1'b1;
                 end
@@ -402,13 +419,14 @@
             4'd2: next_state = 4'd3;
             4'd3: next_state = 4'd4;
             4'd4: next_state = 4'd5;
-            4'd5: next_state = 4'd6; 
-            4'd6: next_state = 4'd7;
+            4'd5: next_state = 4'd6;
+            4'd6: next_state = 4'd7; 
             4'd7: next_state = 4'd8;
-            4'd8: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1;
-            4'd9: next_state = 4'd9;
+            4'd8: next_state = 4'd9;
+            4'd9: next_state = (iteration == 9'd255) ? 4'd10 : 4'd1;
+            4'd10: next_state = 4'd10;
             default: next_state = 4'd0;
         endcase
     end
 
-    endmodule
+endmodule
