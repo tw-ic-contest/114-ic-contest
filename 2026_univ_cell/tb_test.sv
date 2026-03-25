@@ -39,3 +39,5 @@ module tb;
     end
 
 endmodule
+
+vcs -R top.v tb_test.sv -sverilog -full64 -y /usr/cad/synopsys/synthesis/cur/dw/sim_ver +incdir+/usr/cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v -debug_access+all
