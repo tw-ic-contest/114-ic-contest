@@ -11,6 +11,13 @@ module tb;
         .in2(in2),
         .out(out)
     );
+    
+    initial begin
+        `ifdef SDF
+            // "dut" 必須對應你 tb 中實例化 top 的名稱
+            $sdf_annotate("top_syn.sdf", dut); 
+        `endif
+    end
 
     initial begin
         $display("--------------------------------------------------");
