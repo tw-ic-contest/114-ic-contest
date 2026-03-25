@@ -238,7 +238,7 @@
 
     assign coef_num_w = $signed(eta_m_sqrt_kgg_w) <<< 12; //shift for numeration of divider (Q4.12 -> Q8.24)
 
-    assign coef_den_w = $signed({{15{g2[16]}}, g2}); // assign g^2 for denominator
+    assign coef_den_w = ($signed({{15{g2[16]}}, g2}) == 32'sd0) ? 32'sd1 : $signed({{15{g2[16]}}, g2}); // assign g^2 for denominator
 
     DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
     U_DIV1 (.a(coef_num_w), .b(coef_den_w), .quotient(coef_w), .remainder());
@@ -253,7 +253,7 @@
 
     assign t_num_w = $signed(big_z) <<< 12;
 
-    assign t_den_w = $signed(eta_m_coef_w);
+    assign t_den_w = ($signed(eta_m_coef_w) == 32'sd0) ? 32'sd1 :  $signed(eta_m_coef_w);
 
     DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
     U_DIV2 (.a(t_num_w), .b(t_den_w), .quotient(t_w), .remainder());
