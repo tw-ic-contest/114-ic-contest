@@ -352,7 +352,9 @@ module Seq_Div (
 
     wire [31:0] abs_num = (num[31]) ? -num : num;
     wire [31:0] abs_den = (den[31]) ? -den : den;
-    wire [32:0] sub_res = remainder[62:30] - divisor;
+    
+    // Compare the shifted 32-bit accumulator against the divisor safely
+    wire [32:0] sub_res = {1'b0, remainder[62:31]} - {1'b0, divisor};
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -370,21 +372,23 @@ module Seq_Div (
                 sign <= num[31] ^ den[31];
                 done <= 0;
             end else if (count > 0) begin
-                if (!sub_res[32]) begin // 如果減法為正
-                    remainder <= {sub_res[31:0], remainder[29:0], 1'b1};
+                if (!sub_res[32]) begin // If subtraction didn't underflow (positive)
+                    // Replace top bits with result, shift bottom bits, append 1
+                    remainder <= {sub_res[31:0], remainder[30:0], 1'b1};
                 end else begin
-                    remainder <= {remainder[61:0], 1'b0};
+                    // Shift the entire 64-bit register cleanly by 1
+                    remainder <= {remainder[62:0], 1'b0};
                 end
                 count <= count - 1;
                 if (count == 1) done <= 1;
             end else begin
                 done <= 0;
+                // The quotient naturally ends up in the lower 32 bits of the remainder
                 quo <= sign ? -remainder[31:0] : remainder[31:0];
             end
         end
     end
 endmodule
-
 
 // =========================================================================
 // Area-Optimized Sequential SQRT (Digit-by-digit algorithm)
