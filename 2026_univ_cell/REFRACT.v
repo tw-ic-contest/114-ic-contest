@@ -43,7 +43,7 @@ module REFRACT(
     // =========================================================================
     reg div_start;
     reg signed [31:0] div_num, div_den;
-    wire signed [31:0] div_quo;
+    wire signed [31:0] div_quo; // 改為 wire 以消滅 1-cycle 延遲
     wire div_done;
 
     reg sqrt_start;
@@ -64,10 +64,13 @@ module REFRACT(
     );
 
     // =========================================================================
-    // Combinational Math for Polynomials (Small 5-bit to 32-bit operations)
+    // Combinational Math for Polynomials (Strictly Signed)
     // =========================================================================
-    wire signed [31:0] dx = {27'd0, x_idx} - 32'd8;
-    wire signed [31:0] dy = {27'd0, y_idx} - 32'd8;
+    wire signed [31:0] x_val = {27'd0, x_idx};
+    wire signed [31:0] y_val = {27'd0, y_idx};
+
+    wire signed [31:0] dx = x_val - 32'sd8;
+    wire signed [31:0] dy = y_val - 32'sd8;
 
     wire signed [31:0] dx_2 = dx * dx;
     wire signed [31:0] dx_4 = dx_2 * dx_2;
@@ -81,14 +84,20 @@ module REFRACT(
 
     wire signed [31:0] gx_comb = dx_7 >>> 8;
     wire signed [31:0] gy_comb = dy_7 >>> 8;
-    wire signed [31:0] Z_comb  = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
     
-    wire signed [31:0] g2_comb = ((gx_comb * gx_comb) >>> 12) + ((gy_comb * gy_comb) >>> 12) + 32'd4096;
+    // 加上 'sd 確保常數為 signed
+    wire signed [31:0] Z_comb  = 32'sd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
+    
+    wire signed [31:0] g2_comb = ((gx_comb * gx_comb) >>> 12) + ((gy_comb * gy_comb) >>> 12) + 32'sd4096;
     wire signed [31:0] inner_comb = g2_comb - ((eta2_12 * g2_comb) >>> 12) + eta2_12;
 
     wire signed [31:0] t_coef_comb = (t_12 * coef_12) >>> 12;
-    wire signed [31:0] zx_comb = ({28'd0, x_idx} <<< 12) + ((t_coef_comb * gx_reg) >>> 12);
-    wire signed [31:0] zy_comb = ({28'd0, y_idx} <<< 12) + ((t_coef_comb * gy_reg) >>> 12);
+    
+    // 嚴格確保全部都是 signed 運算
+    wire signed [31:0] t_gx = t_coef_comb * gx_reg;
+    wire signed [31:0] t_gy = t_coef_comb * gy_reg;
+    wire signed [31:0] zx_comb = (x_val <<< 12) + (t_gx >>> 12);
+    wire signed [31:0] zy_comb = (y_val <<< 12) + (t_gy >>> 12);
 
     // =========================================================================
     // Main FSM
@@ -111,8 +120,8 @@ module REFRACT(
 
             case (current_state)
                 S_IDLE: begin
-                    div_num <= 32'd4096;
-                    div_den <= {28'd0, RI}; // RI input [cite: 81]
+                    div_num <= 32'sd4096;
+                    div_den <= {28'd0, RI}; 
                     div_start <= 1'b1;
                     current_state <= S_WAIT_ETA;
                 end
@@ -126,7 +135,6 @@ module REFRACT(
                 end
 
                 S_CALC_POW: begin
-                    // Latch combinational results to break critical path
                     gx_reg <= gx_comb;
                     gy_reg <= gy_comb;
                     Z_reg  <= Z_comb;
@@ -177,22 +185,34 @@ module REFRACT(
                 end
 
                 S_CALC_COORD: begin
-                    // Evaluate and latch final coordinates
                     zx_reg <= zx_comb;
                     zy_reg <= zy_comb;
+                    
+                    // --- Debugging Display ---
+                    if (x_idx == 4'd0 && y_idx == 4'd0) begin
+                        $display("====== DEBUG (0,0) RI=%0d ======", RI);
+                        $display("gx_reg = %0d, gy_reg = %0d", gx_reg, gy_reg);
+                        $display("Z_reg  = %0d, g2_reg = %0d", Z_reg, g2_reg);
+                        $display("eta_12 = %0d, eta2_12= %0d", eta_12, eta2_12);
+                        $display("sqrt   = %0d", sqrt_kgg_12);
+                        $display("coef_12= %0d, t_12   = %0d", coef_12, t_12);
+                        $display("zx_comb= %0d (0x%h)", zx_comb, zx_comb[15:0]);
+                        $display("=================================");
+                    end
+
                     current_state <= S_WRITE_ZX;
                 end
 
                 S_WRITE_ZX: begin
                     SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b0}; // Store ZX [cite: 165]
+                    SRAM_A  <= {y_idx, x_idx, 1'b0}; 
                     SRAM_D  <= zx_reg[15:0];
                     current_state <= S_WRITE_ZY;
                 end
 
                 S_WRITE_ZY: begin
                     SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b1}; // Store ZY [cite: 165]
+                    SRAM_A  <= {y_idx, x_idx, 1'b1}; 
                     SRAM_D  <= zy_reg[15:0];
                     current_state <= S_NEXT;
                 end
@@ -229,7 +249,7 @@ module Seq_Div (
     input  wire        start,
     input  wire signed [31:0] num,
     input  wire signed [31:0] den,
-    output reg  signed [31:0] quo,
+    output wire signed [31:0] quo, // 改為 wire 直接輸出，消滅延遲
     output reg         done
 );
     reg [5:0] count;
@@ -241,9 +261,12 @@ module Seq_Div (
     wire [31:0] abs_den = (den[31]) ? -den : den;
     wire [32:0] sub_res = {1'b0, remainder[62:31]} - {1'b0, divisor};
 
+    // quotient 直接抓取移位完成的 remainder，不再等下一個 Clock 結算
+    assign quo = sign ? -remainder[31:0] : remainder[31:0];
+
     always @(posedge clk or posedge rst) begin
         if (rst) begin
-            count <= 0; quo <= 0; done <= 0;
+            count <= 0; done <= 0;
             remainder <= 0; divisor <= 0; sign <= 0;
         end else begin
             if (start) begin
@@ -260,7 +283,6 @@ module Seq_Div (
                 if (count == 1) done <= 1;
             end else begin
                 done <= 0;
-                quo <= sign ? -remainder[31:0] : remainder[31:0];
             end
         end
     end
