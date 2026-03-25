@@ -333,7 +333,7 @@
                     t <= t_w[16:0];
                 end            
                             
-                4'd6: begin //COMPUTING_4
+                4'd6: begin //COMPUTING_5
                     z_x <= z_x_w;
                     z_y <= z_y_w;
                 end
