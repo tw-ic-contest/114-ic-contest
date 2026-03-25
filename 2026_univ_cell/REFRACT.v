@@ -396,7 +396,7 @@
             4'd7: next_state = 4'd8;
             4'd8: next_state = 4'd9;
             4'd9: next_state = (iteration == 9'd255) ? 4'd10 : 4'd1;
-            4'd10: next_state = 4'd9;
+            4'd10: next_state = 4'd10;
             default: next_state = 4'd0;
         endcase
     end
