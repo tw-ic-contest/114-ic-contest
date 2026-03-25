@@ -199,6 +199,7 @@ module sqrt_module (
     reg [31:0] x, y, res;
     reg [4:0] count;
     reg busy;
+    wire [31:0] t;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -208,7 +209,7 @@ module sqrt_module (
             count <= 15;
             x <= in; y <= 0; res <= 0;
         end else if (busy) begin
-            wire [31:0] t = (res << (count + 1)) | (32'd1 << (count << 1));
+            t = (res << (count + 1)) | (32'd1 << (count << 1));
             if (x >= t) begin
                 x <= x - t;
                 res <= res | (32'd1 << count);
