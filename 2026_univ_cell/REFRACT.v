@@ -16,6 +16,10 @@ reg [3:0] read_ri;
 reg [8:0] iteration;
 reg [15:0] input_x;
 reg [15:0] input_y;
+
+reg [15:0] temp_x;
+reg [15:0] temp_y;
+
 reg [15:0] z_x;
 reg [15:0] z_y;
 
@@ -37,9 +41,10 @@ always @(posedge CLK or posedge RST) begin
 
         case (state)
             4'd0: begin // INIT
-                read_ri   <= RI;
+                read_ri <= RI;
                 iteration <= 9'd0;
-                DONE      <= 1'b0;
+                SRAM_WE <= 1'b0;
+                DONE <= 1'b0;
             end
 
             4'd1: begin // READ_X_ADDR
@@ -59,24 +64,26 @@ always @(posedge CLK or posedge RST) begin
             end
 
             4'd5: begin // COMPUTING
-                z_x <= input_x; //dummy test
-                z_y <= input_y; //dummy test
+
+                //temp_x = (input_x - (16'd8 << 12)) >>> 3;
+                z_x = input_x;
+                z_y = input_y;
             end
 
             4'd6: begin // WRITE_X
                 SRAM_WE <= 1'b1;
-                SRAM_A  <= iteration << 1;
-                SRAM_D  <= z_x;
+                SRAM_A <= iteration << 1;
+                SRAM_D <= z_x;
             end
 
             4'd7: begin // WRITE_Y
                 SRAM_WE <= 1'b1;
-                SRAM_A  <= (iteration << 1) + 9'd1;
-                SRAM_D  <= z_y;
+                SRAM_A <= (iteration << 1) + 9'd1;
+                SRAM_D <= z_y;
             end
 
             4'd8: begin // NEXT
-                SRAM_WE   <= 1'b0;
+                SRAM_WE <= 1'b0;
                 iteration <= iteration + 9'd1;
             end
 
@@ -91,9 +98,7 @@ always @(posedge CLK or posedge RST) begin
         endcase
 
         $display("t=%0t | state=%0d iter=%0d | A=%0d Q=%0d | D=%0d WE=%0d DONE=%0d",
-             $time, uut.state, uut.iteration,
-             SRAM_A, SRAM_Q,
-             SRAM_D, SRAM_WE, DONE);
+                 $time, state, iteration, SRAM_A, SRAM_Q, SRAM_D, SRAM_WE, DONE);
     end
 end
 
