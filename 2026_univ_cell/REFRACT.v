@@ -125,7 +125,7 @@
     // 1.0 in Q4.12 = 4096
     // -----------------------------
     assign eta_num_w = 32'd1 << 24;
-    assign eta_den_w = {28'd0, RI};
+    assign eta_den_w  = (RI == 4'd0) ? 32'd1 : {28'd0, RI};
 
     DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
     U_DIV_ETA (.a(eta_num_w), .b(eta_den_w), .quotient (eta_w), .remainder());
@@ -213,7 +213,7 @@
     // get sqrt_kgg
     // input shift so sqrt output stays around Q4.12
     // -----------------------------
-    assign sqrt_in_w = kgg_w <<< 12; //shift to Q8.24 before sqrt
+    assign sqrt_in_w  = kgg[31] ? 32'd0 : (kgg <<< 12); //shift to Q8.24 before sqrt
 
     DW_sqrt #(.width(32), .tc_mode(0)) 
     U_SQRT (.a(sqrt_in_w), .root(sqrt_kgg_w));
@@ -230,7 +230,7 @@
 
     assign coef_num_w = $signed(eta_m_sqrt_kgg_w) <<< 12; //shift for numeration of divider (Q4.12 -> Q8.24)
 
-    assign coef_den_w = $signed({{15{g2[16]}}, g2}); // assign g^2 for denominator
+    assign coef_den_w = (g2 == 17'sd0) ? 32'sd1 : $signed({{15{g2[16]}}, g2});
 
     DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
     U_DIV1 (.a(coef_num_w), .b(coef_den_w), .quotient(coef_w), .remainder());
@@ -245,7 +245,7 @@
 
     assign t_num_w = $signed(big_z) <<< 12;
 
-    assign t_den_w = $signed(eta_m_coef_w);
+    assign t_den_w    = (eta_m_coef_w == 17'sd0) ? 32'sd1 : $signed(eta_m_coef_w);
 
     DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
     U_DIV2 (.a(t_num_w), .b(t_den_w), .quotient(t_w), .remainder());
