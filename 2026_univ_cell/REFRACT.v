@@ -4,176 +4,310 @@ module REFRACT(
     input  wire [3:0]  RI,   
     output reg  [8:0]  SRAM_A,
     output reg  [15:0] SRAM_D,
-    input  wire [15:0] SRAM_Q,   // unused [cite: 255]
+    input  wire [15:0] SRAM_Q,   // unused
     output reg         SRAM_WE,
     output reg         DONE
 );
 
-    // FSM States
-    localparam IDLE     = 3'd0;
-    localparam CALC     = 3'd1;
-    localparam WRITE_ZX = 3'd2;
-    localparam WRITE_ZY = 3'd3;
-    localparam FINISH   = 3'd4;
+    // =========================================================================
+    // FSM State Definitions
+    // =========================================================================
+    localparam S_IDLE       = 4'd0;
+    localparam S_WAIT_ETA   = 4'd1;
+    localparam S_CALC_POW   = 4'd2;
+    localparam S_START_SQRT = 4'd3;
+    localparam S_WAIT_SQRT  = 4'd4;
+    localparam S_START_COEF = 4'd5;
+    localparam S_WAIT_COEF  = 4'd6;
+    localparam S_START_T    = 4'd7;
+    localparam S_WAIT_T     = 4'd8;
+    localparam S_CALC_COORD = 4'd9;
+    localparam S_WRITE_ZX   = 4'd10;
+    localparam S_WRITE_ZY   = 4'd11;
+    localparam S_NEXT       = 4'd12;
+    localparam S_FINISH     = 4'd13;
 
-    reg [2:0] current_state, next_state;
+    reg [3:0] current_state;
     reg [3:0] x_idx, y_idx;
 
-    // -------------------------------------------------------------------------
-    // Q4.12 Fixed-Point Combinational Datapath
-    // -------------------------------------------------------------------------
-    // Q12 format means multiplying the real value by 4096 (1 << 12).
-    
-    wire signed [31:0] x_val = {27'd0, x_idx};
-    wire signed [31:0] y_val = {27'd0, y_idx};
-    
-    // dx = X - 8, dy = Y - 8
-    wire signed [31:0] dx = x_val - 32'd8;
-    wire signed [31:0] dy = y_val - 32'd8;
+    // =========================================================================
+    // Pipeline Registers
+    // =========================================================================
+    reg signed [31:0] eta_12, eta2_12;
+    reg signed [31:0] gx_reg, gy_reg, Z_reg, g2_reg;
+    reg signed [31:0] sqrt_kgg_12, coef_12, t_12;
+    reg signed [31:0] zx_reg, zy_reg;
 
-    // Calculate powers for X
+    // =========================================================================
+    // Sequential Module Interconnects
+    // =========================================================================
+    reg div_start;
+    reg signed [31:0] div_num, div_den;
+    wire signed [31:0] div_quo;
+    wire div_done;
+
+    reg sqrt_start;
+    reg [31:0] sqrt_rad;
+    wire [15:0] sqrt_root;
+    wire sqrt_done;
+
+    Seq_Div u_div (
+        .clk(CLK), .rst(RST), .start(div_start),
+        .num(div_num), .den(div_den),
+        .quo(div_quo), .done(div_done)
+    );
+
+    Seq_Sqrt u_sqrt (
+        .clk(CLK), .rst(RST), .start(sqrt_start),
+        .rad(sqrt_rad),
+        .root(sqrt_root), .done(sqrt_done)
+    );
+
+    // =========================================================================
+    // Combinational Math for Polynomials (Small 5-bit to 32-bit operations)
+    // =========================================================================
+    wire signed [31:0] dx = {27'd0, x_idx} - 32'd8;
+    wire signed [31:0] dy = {27'd0, y_idx} - 32'd8;
+
     wire signed [31:0] dx_2 = dx * dx;
     wire signed [31:0] dx_4 = dx_2 * dx_2;
     wire signed [31:0] dx_7 = dx_4 * dx_2 * dx;
     wire signed [31:0] dx_8 = dx_4 * dx_4;
 
-    // Calculate powers for Y
     wire signed [31:0] dy_2 = dy * dy;
     wire signed [31:0] dy_4 = dy_2 * dy_2;
     wire signed [31:0] dy_7 = dy_4 * dy_2 * dy;
     wire signed [31:0] dy_8 = dy_4 * dy_4;
 
-    // Calculate gx and gy in Q12
-    // gx = 2 * (dx^7 / 8^7) -> (2 * dx^7 / 2^21)
-    // To convert to Q12: (dx^7 / 2^20) * 2^12 = dx^7 >>> 8
-    wire signed [31:0] gx_12 = dx_7 >>> 8;
-    wire signed [31:0] gy_12 = dy_7 >>> 8;
+    wire signed [31:0] gx_comb = dx_7 >>> 8;
+    wire signed [31:0] gy_comb = dy_7 >>> 8;
+    wire signed [31:0] Z_comb  = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
+    
+    wire signed [31:0] g2_comb = ((gx_comb * gx_comb) >>> 12) + ((gy_comb * gy_comb) >>> 12) + 32'd4096;
+    wire signed [31:0] inner_comb = g2_comb - ((eta2_12 * g2_comb) >>> 12) + eta2_12;
 
-    // Calculate Z in Q12
-    // Z = 6 - 2*(dx^8 / 2^24) - 2*(dy^8 / 2^24)
-    // To Q12: 24576 - (2 * dx^8 * 4096 / 2^24) ... = 24576 - (dx^8 >>> 11) - (dy^8 >>> 11)
-    wire signed [31:0] Z_12 = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
+    wire signed [31:0] t_coef_comb = (t_12 * coef_12) >>> 12;
+    wire signed [31:0] zx_comb = ({28'd0, x_idx} <<< 12) + ((t_coef_comb * gx_reg) >>> 12);
+    wire signed [31:0] zy_comb = ({28'd0, y_idx} <<< 12) + ((t_coef_comb * gy_reg) >>> 12);
 
-    // eta = 1 / RI
-    wire signed [31:0] ri_signed = {28'd0, RI};
-    wire signed [31:0] eta_12 = 32'd4096 / ri_signed;
-    wire signed [31:0] eta2_12 = (eta_12 * eta_12) >>> 12;
-
-    // g^2 = gx^2 + gy^2 + 1
-    wire signed [31:0] g2_12 = ((gx_12 * gx_12) >>> 12) + ((gy_12 * gy_12) >>> 12) + 32'd4096;
-
-    // inner = g^2 - eta^2 * g^2 + eta^2
-    wire signed [31:0] inner_12 = g2_12 - ((eta2_12 * g2_12) >>> 12) + eta2_12;
-
-    // sqrt_kgg = sqrt(inner)
-    // To maintain Q12 after sqrt, we must shift left by 12 before squaring
-    wire [31:0] sqrt_input = inner_12 <<< 12;
-    wire signed [31:0] sqrt_kgg_12 = {16'd0, sqrt_func(sqrt_input)};
-
-    // coef = (eta - sqrt_kgg) / g^2
-    wire signed [31:0] coef_num = (eta_12 - sqrt_kgg_12) <<< 12;
-    wire signed [31:0] coef_12 = coef_num / g2_12;
-
-    // t = Z / (eta - coef)
-    wire signed [31:0] t_num = Z_12 <<< 12;
-    wire signed [31:0] t_den = eta_12 - coef_12;
-    wire signed [31:0] t_12 = t_num / t_den;
-
-    // Final coordinates
-    wire signed [31:0] t_coef_12 = (t_12 * coef_12) >>> 12;
-    wire signed [31:0] zx_12 = (x_val <<< 12) + ((t_coef_12 * gx_12) >>> 12);
-    wire signed [31:0] zy_12 = (y_val <<< 12) + ((t_coef_12 * gy_12) >>> 12);
-
-    // -------------------------------------------------------------------------
-    // Combinational Integer Square Root Function
-    // -------------------------------------------------------------------------
-    function [15:0] sqrt_func;
-        input [31:0] val;
-        reg [31:0] temp, root;
-        integer i;
-        begin
-            root = 0;
-            for (i = 15; i >= 0; i = i - 1) begin
-                temp = root | (1 << i);
-                if ((temp * temp) <= val)
-                    root = temp;
-            end
-            sqrt_func = root[15:0];
-        end
-    endfunction
-
-    // -------------------------------------------------------------------------
-    // FSM Sequential Logic
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Main FSM
+    // =========================================================================
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
-            current_state <= IDLE;
-            x_idx         <= 4'd0;
-            y_idx         <= 4'd0;
-        end else begin
-            current_state <= next_state;
-            
-            // Advance coordinate grid after Y is written
-            if (current_state == WRITE_ZY) begin
-                if (x_idx == 4'd15) begin
-                    x_idx <= 4'd0;
-                    if (y_idx != 4'd15) begin
-                        y_idx <= y_idx + 1'b1;
-                    end
-                end else begin
-                    x_idx <= x_idx + 1'b1;
-                end
-            end
-        end
-    end
-
-    // -------------------------------------------------------------------------
-    // FSM Next State Logic
-    // -------------------------------------------------------------------------
-    always @(*) begin
-        next_state = current_state; 
-        case (current_state)
-            IDLE:     next_state = CALC;
-            CALC:     next_state = WRITE_ZX; // Mathematical path evaluates here
-            WRITE_ZX: next_state = WRITE_ZY;
-            WRITE_ZY: begin
-                if (x_idx == 4'd15 && y_idx == 4'd15)
-                    next_state = FINISH;
-                else
-                    next_state = CALC;
-            end
-            FINISH:   next_state = FINISH;
-            default:  next_state = IDLE;
-        endcase
-    end
-
-    // -------------------------------------------------------------------------
-    // Output Registers (SRAM Control & DONE)
-    // -------------------------------------------------------------------------
-    always @(posedge CLK or posedge RST) begin
-        if (RST) begin
+            current_state <= S_IDLE;
+            x_idx <= 4'd0;
+            y_idx <= 4'd0;
             SRAM_WE <= 1'b0;
-            SRAM_A  <= 9'd0;
-            SRAM_D  <= 16'd0;
-            DONE    <= 1'b0;
+            DONE <= 1'b0;
+            div_start <= 1'b0;
+            sqrt_start <= 1'b0;
         end else begin
+            // Default pulldowns
             SRAM_WE <= 1'b0;
-            DONE    <= (current_state == FINISH) ? 1'b1 : 1'b0;
+            div_start <= 1'b0;
+            sqrt_start <= 1'b0;
+            DONE <= (current_state == S_FINISH) ? 1'b1 : 1'b0;
 
             case (current_state)
-                WRITE_ZX: begin
-                    SRAM_WE <= 1'b1;
-                    // Address format stores X coordinates iteratively, then Y [cite: 159, 160, 164, 165]
-                    SRAM_A  <= {y_idx, x_idx, 1'b0}; 
-                    SRAM_D  <= zx_12[15:0];
+                S_IDLE: begin
+                    div_num <= 32'd4096;
+                    div_den <= {28'd0, RI}; // RI input [cite: 81]
+                    div_start <= 1'b1;
+                    current_state <= S_WAIT_ETA;
                 end
-                WRITE_ZY: begin
+
+                S_WAIT_ETA: begin
+                    if (div_done) begin
+                        eta_12  <= div_quo;
+                        eta2_12 <= (div_quo * div_quo) >>> 12;
+                        current_state <= S_CALC_POW;
+                    end
+                end
+
+                S_CALC_POW: begin
+                    // Latch combinational results to break critical path
+                    gx_reg <= gx_comb;
+                    gy_reg <= gy_comb;
+                    Z_reg  <= Z_comb;
+                    g2_reg <= g2_comb;
+                    
+                    sqrt_rad <= inner_comb <<< 12; 
+                    current_state <= S_START_SQRT;
+                end
+
+                S_START_SQRT: begin
+                    sqrt_start <= 1'b1;
+                    current_state <= S_WAIT_SQRT;
+                end
+
+                S_WAIT_SQRT: begin
+                    if (sqrt_done) begin
+                        sqrt_kgg_12 <= {16'd0, sqrt_root};
+                        current_state <= S_START_COEF;
+                    end
+                end
+
+                S_START_COEF: begin
+                    div_num <= (eta_12 - sqrt_kgg_12) <<< 12;
+                    div_den <= g2_reg;
+                    div_start <= 1'b1;
+                    current_state <= S_WAIT_COEF;
+                end
+
+                S_WAIT_COEF: begin
+                    if (div_done) begin
+                        coef_12 <= div_quo;
+                        current_state <= S_START_T;
+                    end
+                end
+
+                S_START_T: begin
+                    div_num <= Z_reg <<< 12;
+                    div_den <= eta_12 - coef_12;
+                    div_start <= 1'b1;
+                    current_state <= S_WAIT_T;
+                end
+
+                S_WAIT_T: begin
+                    if (div_done) begin
+                        t_12 <= div_quo;
+                        current_state <= S_CALC_COORD;
+                    end
+                end
+
+                S_CALC_COORD: begin
+                    // Evaluate and latch final coordinates
+                    zx_reg <= zx_comb;
+                    zy_reg <= zy_comb;
+                    current_state <= S_WRITE_ZX;
+                end
+
+                S_WRITE_ZX: begin
                     SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b1}; 
-                    SRAM_D  <= zy_12[15:0];
+                    SRAM_A  <= {y_idx, x_idx, 1'b0}; // Store ZX [cite: 165]
+                    SRAM_D  <= zx_reg[15:0];
+                    current_state <= S_WRITE_ZY;
+                end
+
+                S_WRITE_ZY: begin
+                    SRAM_WE <= 1'b1;
+                    SRAM_A  <= {y_idx, x_idx, 1'b1}; // Store ZY [cite: 165]
+                    SRAM_D  <= zy_reg[15:0];
+                    current_state <= S_NEXT;
+                end
+
+                S_NEXT: begin
+                    if (x_idx == 4'd15 && y_idx == 4'd15) begin
+                        current_state <= S_FINISH;
+                    end else begin
+                        if (x_idx == 4'd15) begin
+                            x_idx <= 4'd0;
+                            y_idx <= y_idx + 1'b1;
+                        end else begin
+                            x_idx <= x_idx + 1'b1;
+                        end
+                        current_state <= S_CALC_POW;
+                    end
+                end
+
+                S_FINISH: begin
+                    current_state <= S_FINISH;
                 end
             endcase
         end
     end
 
+endmodule
+
+// =========================================================================
+// Area-Optimized Sequential Divider (Signed, 32-bit)
+// =========================================================================
+module Seq_Div (
+    input  wire        clk,
+    input  wire        rst,
+    input  wire        start,
+    input  wire signed [31:0] num,
+    input  wire signed [31:0] den,
+    output reg  signed [31:0] quo,
+    output reg         done
+);
+    reg [5:0] count;
+    reg [63:0] remainder;
+    reg [31:0] divisor;
+    reg sign;
+
+    wire [31:0] abs_num = (num[31]) ? -num : num;
+    wire [31:0] abs_den = (den[31]) ? -den : den;
+    wire [32:0] sub_res = {1'b0, remainder[62:31]} - {1'b0, divisor};
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            count <= 0; quo <= 0; done <= 0;
+            remainder <= 0; divisor <= 0; sign <= 0;
+        end else begin
+            if (start) begin
+                count <= 6'd32;
+                remainder <= {32'd0, abs_num};
+                divisor <= abs_den;
+                sign <= num[31] ^ den[31];
+                done <= 0;
+            end else if (count > 0) begin
+                if (!sub_res[32]) remainder <= {sub_res[31:0], remainder[30:0], 1'b1};
+                else remainder <= {remainder[62:0], 1'b0};
+                
+                count <= count - 1;
+                if (count == 1) done <= 1;
+            end else begin
+                done <= 0;
+                quo <= sign ? -remainder[31:0] : remainder[31:0];
+            end
+        end
+    end
+endmodule
+
+// =========================================================================
+// Area-Optimized Sequential SQRT (Digit-by-digit algorithm)
+// =========================================================================
+module Seq_Sqrt (
+    input  wire        clk,
+    input  wire        rst,
+    input  wire        start,
+    input  wire [31:0] rad,
+    output reg  [15:0] root,
+    output reg         done
+);
+    reg [4:0]  count;
+    reg [31:0] acc;
+    reg [31:0] rad_reg;
+    
+    wire [31:0] next_acc  = {acc[29:0], rad_reg[31:30]};
+    wire [31:0] test_val  = {14'd0, root, 2'b01};
+    wire        can_sub   = (next_acc >= test_val);
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            count <= 0; acc <= 0; root <= 0;
+            rad_reg <= 0; done <= 0;
+        end else begin
+            if (start) begin
+                count <= 5'd16;
+                rad_reg <= rad;
+                acc <= 32'd0; root <= 16'd0; done <= 1'b0;
+            end else if (count > 0) begin
+                if (can_sub) begin
+                    acc <= next_acc - test_val;
+                    root <= {root[14:0], 1'b1};
+                end else begin
+                    acc <= next_acc;
+                    root <= {root[14:0], 1'b0};
+                end
+                rad_reg <= {rad_reg[29:0], 2'b00};
+                count <= count - 1'b1;
+                if (count == 5'd1) done <= 1'b1;
+            end else begin
+                done <= 1'b0;
+            end
+        end
+    end
 endmodule
