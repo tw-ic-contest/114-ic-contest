@@ -129,11 +129,12 @@ endmodule
 // 手寫時序開根號器 (32-bit)
 module my_sqrt(input clk, rst, start, input [31:0] in, output reg [31:0] out, output reg done);
     reg [31:0] x, r, q; reg [5:0] i; reg busy;
+    reg [31:0] t;
     always @(posedge clk or posedge rst) begin
         if (rst) begin busy <= 0; done <= 0; end
         else if (start) begin busy <= 1; i <= 15; x <= in; r <= 0; q <= 0; done <= 0; end
         else if (busy) begin
-            reg [31:0] t <= (q << (i+1)) | (32'd1 << (i<<1));
+            t <= (q << (i+1)) | (32'd1 << (i<<1));
             if (x >= t) begin x <= x - t; q <= q | (32'd1 << i); end
             if (i == 0) begin out <= q; busy <= 0; done <= 1; end
             else i <= i - 1;
