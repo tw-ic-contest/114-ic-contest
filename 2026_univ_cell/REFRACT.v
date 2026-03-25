@@ -199,7 +199,7 @@ module sqrt_module (
     reg [31:0] x, y, res;
     reg [4:0] count;
     reg busy;
-    wire [31:0] t;
+    reg [31:0] t;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
