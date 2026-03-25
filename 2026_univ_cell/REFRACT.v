@@ -133,7 +133,7 @@ module my_sqrt(input clk, rst, start, input [31:0] in, output reg [31:0] out, ou
         if (rst) begin busy <= 0; done <= 0; end
         else if (start) begin busy <= 1; i <= 15; x <= in; r <= 0; q <= 0; done <= 0; end
         else if (busy) begin
-            wire [31:0] t = (q << (i+1)) | (32'd1 << (i<<1));
+            reg [31:0] t <= (q << (i+1)) | (32'd1 << (i<<1));
             if (x >= t) begin x <= x - t; q <= q | (32'd1 << i); end
             if (i == 0) begin out <= q; busy <= 0; done <= 1; end
             else i <= i - 1;
