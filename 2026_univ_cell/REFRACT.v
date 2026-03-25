@@ -136,7 +136,7 @@
     // shift back to Q4.12
     // -----------------------------
     assign eta_mul_eta_w = eta_w * eta_w;
-    assign eta2_w = eta_mul_eta_w >> 24;
+    assign eta2_w = eta_mul_eta_w >> 36;
 
 
 
@@ -352,9 +352,11 @@
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
 
-                    $display("%2d %2d  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f",
+                    $display("%2d %2d  eta=%8.4f eta2=%8.4f  Z=%8.4f g2=%8.4f sqrt=%8.4f coef=%8.4f t=%8.4f zx=%8.4f zy=%8.4f",
                         x_idx,
                         y_idx,
+                        $itor(eta) / 4096.0,
+                        $itor(eta2) / 4096.0,
                         $itor(big_z) / 4096.0,
                         $itor(g2) / 4096.0,
                         $itor(sqrt_kgg_r) / 4096.0,
