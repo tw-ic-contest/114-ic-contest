@@ -9,182 +9,129 @@ module REFRACT(
     output reg         DONE
 );
 
-    // FSM States (Expanded for Pipelining)
-    localparam IDLE     = 3'd0;
-    localparam CALC_1   = 3'd1;  // Pipeline Stage 1
-    localparam CALC_2   = 3'd2;  // Pipeline Stage 2
-    localparam WRITE_ZX = 3'd3;
-    localparam WRITE_ZY = 3'd4;
-    localparam FINISH   = 3'd5;
+    // FSM States
+    localparam IDLE      = 3'd0;
+    localparam CALC_PRE  = 3'd1; // Stage 1: Powers, Z, g2, kgg
+    localparam CALC_SQRT = 3'd2; // Stage 2: Sqrt(kgg) & Coef Division
+    localparam CALC_FIN  = 3'd3; // Stage 3: t Division & Final ZX/ZY
+    localparam WRITE_ZX  = 3'd4;
+    localparam WRITE_ZY  = 3'd5;
+    localparam FINISH    = 3'd6;
 
     reg [2:0] current_state, next_state;
     reg [3:0] x_idx, y_idx;
 
-    // =========================================================================
-    // Pipeline Registers (Barrier between CALC_1 and CALC_2)
-    // =========================================================================
-    reg signed [31:0] gx_12_reg;
-    reg signed [31:0] gy_12_reg;
-    reg signed [31:0] Z_12_reg;
-    reg signed [31:0] eta_12_reg;
-    reg signed [31:0] g2_12_reg;
-    reg signed [31:0] inner_12_reg;
+    // Pipeline Registers
+    reg signed [31:0] gx_reg, gy_reg, Z_reg, eta_reg, g2_reg, inner_reg;
+    reg signed [31:0] sqrt_kgg_reg, coef_reg;
 
     // =========================================================================
-    // Stage 1: Combinational Logic (Evaluated during CALC_1)
+    // Stage 1: Combinational (Powers & kgg)
     // =========================================================================
-    wire signed [31:0] x_val = {27'd0, x_idx};
-    wire signed [31:0] y_val = {27'd0, y_idx};
-    
-    // dx = X - 8, dy = Y - 8
-    wire signed [31:0] dx = x_val - 32'd8;
-    wire signed [31:0] dy = y_val - 32'd8;
+    wire signed [31:0] dx = {28'd0, x_idx} - 32'd8;
+    wire signed [31:0] dy = {28'd0, y_idx} - 32'd8;
 
-    // Calculate powers for X
     wire signed [31:0] dx_2 = dx * dx;
     wire signed [31:0] dx_4 = dx_2 * dx_2;
     wire signed [31:0] dx_7 = dx_4 * dx_2 * dx;
     wire signed [31:0] dx_8 = dx_4 * dx_4;
 
-    // Calculate powers for Y
     wire signed [31:0] dy_2 = dy * dy;
     wire signed [31:0] dy_4 = dy_2 * dy_2;
     wire signed [31:0] dy_7 = dy_4 * dy_2 * dy;
     wire signed [31:0] dy_8 = dy_4 * dy_4;
 
-    wire signed [31:0] gx_12 = dx_7 >>> 8;
-    wire signed [31:0] gy_12 = dy_7 >>> 8;
-    wire signed [31:0] Z_12 = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
+    wire signed [31:0] gx_w = dx_7 >>> 8; // Adjust based on your scaling
+    wire signed [31:0] gy_w = dy_7 >>> 8;
+    wire signed [31:0] Z_w  = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
 
-    // eta = 1 / RI
-    wire signed [31:0] ri_signed = {28'd0, RI};
-    wire signed [31:0] eta_12 = 32'd4096 / ri_signed;
-    wire signed [31:0] eta2_12 = (eta_12 * eta_12) >>> 12;
+    wire signed [31:0] ri_s   = {28'd0, RI};
+    wire signed [31:0] eta_w  = 32'd4096 / ri_s;
+    wire signed [31:0] eta2_w = (eta_w * eta_w) >>> 12;
 
-    wire signed [31:0] g2_12 = ((gx_12 * gx_12) >>> 12) + ((gy_12 * gy_12) >>> 12) + 32'd4096;
-    wire signed [31:0] inner_12 = g2_12 - ((eta2_12 * g2_12) >>> 12) + eta2_12;
+    wire signed [31:0] g2_w    = ((gx_w * gx_w) >>> 12) + ((gy_w * gy_w) >>> 12) + 32'd4096;
+    wire signed [31:0] inner_w = g2_w - ((eta2_w * g2_w) >>> 12) + eta2_w;
 
     // =========================================================================
-    // Stage 2: Combinational Logic (Evaluated during CALC_2)
+    // Stage 2 & 3 Hardware: Using DesignWare for faster Synthesis 
     // =========================================================================
-    wire [31:0] sqrt_input = inner_12_reg <<< 12;
-    wire signed [31:0] sqrt_kgg_12 = {16'd0, sqrt_func(sqrt_input)};
+    wire [31:0] sqrt_res;
+    // 使用 DW_sqrt 替代迴圈 function
+    DW_sqrt #(.width(32), .tc_mode(0)) U_SQRT (.a(inner_reg << 12), .root(sqrt_res));
 
-    wire signed [31:0] coef_num = (eta_12_reg - sqrt_kgg_12) <<< 12;
-    wire signed [31:0] coef_12 = coef_num / g2_12_reg;
+    wire [31:0] coef_q;
+    // 使用 DW_div 處理 coef = num / g2
+    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
+    U_DIV_COEF (.a((eta_reg - {16'd0, sqrt_res[15:0]}) << 12), .b(g2_reg), .quotient(coef_q), .remainder());
 
-    wire signed [31:0] t_num = Z_12_reg <<< 12;
-    wire signed [31:0] t_den = eta_12_reg - coef_12;
-    wire signed [31:0] t_12 = t_num / t_den;
+    wire [31:0] t_q;
+    // 使用 DW_div 處理 t = Z / (eta - coef)
+    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
+    U_DIV_T (.a(Z_reg << 12), .b(eta_reg - coef_reg), .quotient(t_q), .remainder());
 
-    wire signed [31:0] t_coef_12 = (t_12 * coef_12) >>> 12;
-    wire signed [31:0] zx_12 = (x_val <<< 12) + ((t_coef_12 * gx_12_reg) >>> 12);
-    wire signed [31:0] zy_12 = (y_val <<< 12) + ((t_coef_12 * gy_12_reg) >>> 12);
+    // Final calculations (Combinational at Stage 3)
+    wire signed [31:0] t_coef = (t_q * coef_reg) >>> 12;
+    wire signed [31:0] zx_out = ({28'd0, x_idx} << 12) + ((t_coef * gx_reg) >>> 12);
+    wire signed [31:0] zy_out = ({28'd0, y_idx} << 12) + ((t_coef * gy_reg) >>> 12);
 
-    // -------------------------------------------------------------------------
-    // Combinational Integer Square Root Function
-    // -------------------------------------------------------------------------
-    function [15:0] sqrt_func;
-        input [31:0] val;
-        reg [31:0] temp, root;
-        integer i;
-        begin
-            root = 0;
-            for (i = 15; i >= 0; i = i - 1) begin
-                temp = root | (1 << i);
-                if ((temp * temp) <= val)
-                    root = temp;
-            end
-            sqrt_func = root[15:0];
-        end
-    endfunction
-
-    // -------------------------------------------------------------------------
-    // FSM Sequential Logic & Pipeline Register Updating
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Sequential Control
+    // =========================================================================
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
             current_state <= IDLE;
-            x_idx         <= 4'd0;
-            y_idx         <= 4'd0;
-            
-            gx_12_reg    <= 32'd0;
-            gy_12_reg    <= 32'd0;
-            Z_12_reg     <= 32'd0;
-            eta_12_reg   <= 32'd0;
-            g2_12_reg    <= 32'd0;
-            inner_12_reg <= 32'd0;
+            {x_idx, y_idx} <= 8'd0;
+            DONE <= 1'b0;
         end else begin
             current_state <= next_state;
             
-            // Latch Stage 1 data into Pipeline Registers
-            if (current_state == CALC_1) begin
-                gx_12_reg    <= gx_12;
-                gy_12_reg    <= gy_12;
-                Z_12_reg     <= Z_12;
-                eta_12_reg   <= eta_12;
-                g2_12_reg    <= g2_12;
-                inner_12_reg <= inner_12;
-            end
-            
-            // Advance coordinate grid after Y is written
-            if (current_state == WRITE_ZY) begin
-                if (x_idx == 4'd15) begin
-                    x_idx <= 4'd0;
-                    if (y_idx != 4'd15) begin
-                        y_idx <= y_idx + 1'b1;
-                    end
-                end else begin
-                    x_idx <= x_idx + 1'b1;
+            case (current_state)
+                CALC_PRE: begin
+                    gx_reg <= gx_w; gy_reg <= gy_w; Z_reg <= Z_w;
+                    eta_reg <= eta_w; g2_reg <= g2_w; inner_reg <= inner_w;
                 end
-            end
+                CALC_SQRT: begin
+                    coef_reg <= coef_q;
+                end
+                WRITE_ZY: begin
+                    if (x_idx == 4'd15) begin
+                        x_idx <= 4'd0;
+                        if (y_idx != 4'd15) y_idx <= y_idx + 1'b1;
+                    end else x_idx <= x_idx + 1'b1;
+                end
+                FINISH: DONE <= 1'b1;
+            endcase
         end
     end
 
-    // -------------------------------------------------------------------------
-    // FSM Next State Logic
-    // -------------------------------------------------------------------------
     always @(*) begin
-        next_state = current_state; 
+        next_state = current_state;
         case (current_state)
-            IDLE:     next_state = CALC_1;
-            CALC_1:   next_state = CALC_2;   // Transition to Stage 2
-            CALC_2:   next_state = WRITE_ZX; // Stage 2 evaluates here
-            WRITE_ZX: next_state = WRITE_ZY;
-            WRITE_ZY: begin
-                if (x_idx == 4'd15 && y_idx == 4'd15)
-                    next_state = FINISH;
-                else
-                    next_state = CALC_1; // Loop back to Stage 1
-            end
-            FINISH:   next_state = FINISH;
-            default:  next_state = IDLE;
+            IDLE:      next_state = CALC_PRE;
+            CALC_PRE:  next_state = CALC_SQRT;
+            CALC_SQRT: next_state = CALC_FIN;
+            CALC_FIN:  next_state = WRITE_ZX;
+            WRITE_ZX:  next_state = WRITE_ZY;
+            WRITE_ZY:  next_state = (x_idx == 15 && y_idx == 15) ? FINISH : CALC_PRE;
+            default:   next_state = IDLE;
         endcase
     end
 
-    // -------------------------------------------------------------------------
-    // Output Registers (SRAM Control & DONE)
-    // -------------------------------------------------------------------------
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
-            SRAM_WE <= 1'b0;
-            SRAM_A  <= 9'd0;
-            SRAM_D  <= 16'd0;
-            DONE    <= 1'b0;
+            SRAM_WE <= 1'b0; SRAM_A <= 9'd0; SRAM_D <= 16'd0;
         end else begin
             SRAM_WE <= 1'b0;
-            DONE    <= (current_state == FINISH) ? 1'b1 : 1'b0;
-
             case (current_state)
                 WRITE_ZX: begin
                     SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b0}; 
-                    SRAM_D  <= zx_12[15:0];
+                    SRAM_A  <= {y_idx, x_idx, 1'b0};
+                    SRAM_D  <= zx_out[15:0];
                 end
                 WRITE_ZY: begin
                     SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b1}; 
-                    SRAM_D  <= zy_12[15:0];
+                    SRAM_A  <= {y_idx, x_idx, 1'b1};
+                    SRAM_D  <= zy_out[15:0];
                 end
             endcase
         end
