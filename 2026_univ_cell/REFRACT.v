@@ -227,6 +227,17 @@ always @(posedge CLK or posedge RST) begin
                 SRAM_WE <= 1'b0;
                 if (iteration != 9'd255)
                     iteration <= iteration + 9'd1;
+                    
+                    $display("(%0d,%0d) -> (%f,%f) | kgg=%f sqrt=%f coef=%f t=%f",
+                        x_idx,
+                        y_idx,
+                        $itor(z_x) / 4096.0,
+                        $itor(z_y) / 4096.0,
+                        $itor(kgg) / 4096.0,
+                        $itor(sqrt_kgg_r) / 4096.0,
+                        $itor(coef) / 4096.0,
+                        $itor(t) / 4096.0
+                    );
             end
 
             4'd9: begin // FINISH
@@ -239,23 +250,6 @@ always @(posedge CLK or posedge RST) begin
             end
         endcase
 
-        $display("t=%0t | state=%0d iter=%0d (x=%0d y=%0d) | \
-        kgg=%0d sqrt=%0d coef=%0d t=%0d | \
-        zx=%0d zy=%0d | WE=%0d DONE=%0d",
-            $time,
-            state,
-            iteration,
-            x_idx,
-            y_idx,
-            kgg,
-            sqrt_kgg_r,
-            coef,
-            t,
-            z_x,
-            z_y,
-            SRAM_WE,
-            DONE
-        );
     end
 end
 
