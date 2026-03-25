@@ -4,137 +4,139 @@ module REFRACT(
     input  wire [3:0]  RI,   
     output reg  [8:0]  SRAM_A,
     output reg  [15:0] SRAM_D,
-    input  wire [15:0] SRAM_Q,   // unused [cite: 255]
+    input  wire [15:0] SRAM_Q,   
     output reg         SRAM_WE,
     output reg         DONE
 );
 
     // FSM States
     localparam IDLE      = 3'd0;
-    localparam CALC_PRE  = 3'd1; // Stage 1: Powers, Z, g2, kgg
-    localparam CALC_SQRT = 3'd2; // Stage 2: Sqrt(kgg) & Coef Division
-    localparam CALC_FIN  = 3'd3; // Stage 3: t Division & Final ZX/ZY
-    localparam WRITE_ZX  = 3'd4;
-    localparam WRITE_ZY  = 3'd5;
-    localparam FINISH    = 3'd6;
+    localparam CALC_PRE  = 3'd1; 
+    localparam WAIT_SQRT = 3'd2; 
+    localparam WAIT_DIV1 = 3'd3; 
+    localparam WAIT_DIV2 = 3'd4; 
+    localparam WRITE_ZX  = 3'd5;
+    localparam WRITE_ZY  = 3'd6;
+    localparam FINISH    = 3'd7;
 
-    reg [2:0] current_state, next_state;
+    reg [2:0] state;
     reg [3:0] x_idx, y_idx;
 
-    // Pipeline Registers
+    // 運算暫存器
     reg signed [31:0] gx_reg, gy_reg, Z_reg, eta_reg, g2_reg, inner_reg;
-    reg signed [31:0] sqrt_kgg_reg, coef_reg;
+    reg signed [31:0] sqrt_reg, coef_reg, t_reg;
 
-    // =========================================================================
-    // Stage 1: Combinational (Powers & kgg)
-    // =========================================================================
+    // 手寫運算器信號
+    reg  div_start, sqrt_start;
+    reg  [31:0] div_num, div_den, sqrt_in;
+    wire [31:0] div_q, sqrt_out;
+    wire div_done, sqrt_done;
+
+    // 實例化手寫模組
+    my_div  u_div  (.clk(CLK), .rst(RST), .start(div_start),  .num(div_num), .den(div_den), .q(div_q), .done(div_done));
+    my_sqrt u_sqrt (.clk(CLK), .rst(RST), .start(sqrt_start), .in(sqrt_in), .out(sqrt_out), .done(sqrt_done));
+
+    // Stage 1 Logic: Powers & kgg [cite: 122, 126, 146, 150]
     wire signed [31:0] dx = {28'd0, x_idx} - 32'd8;
     wire signed [31:0] dy = {28'd0, y_idx} - 32'd8;
+    wire signed [31:0] dx_8 = (dx*dx)*(dx*dx)*(dx*dx)*(dx*dx);
+    wire signed [31:0] dy_8 = (dy*dy)*(dy*dy)*(dy*dy)*(dy*dy);
+    
+    wire signed [31:0] gx_w = ((dx*dx*dx*dx)*(dx*dx*dx)) >>> 8; 
+    wire signed [31:0] gy_w = ((dy*dy*dy*dy)*(dy*dy*dy)) >>> 8;
+    wire signed [31:0] Z_w  = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11); // 6*4096 = 24576 [cite: 70, 146]
 
-    wire signed [31:0] dx_2 = dx * dx;
-    wire signed [31:0] dx_4 = dx_2 * dx_2;
-    wire signed [31:0] dx_7 = dx_4 * dx_2 * dx;
-    wire signed [31:0] dx_8 = dx_4 * dx_4;
-
-    wire signed [31:0] dy_2 = dy * dy;
-    wire signed [31:0] dy_4 = dy_2 * dy_2;
-    wire signed [31:0] dy_7 = dy_4 * dy_2 * dy;
-    wire signed [31:0] dy_8 = dy_4 * dy_4;
-
-    wire signed [31:0] gx_w = dx_7 >>> 8; // Adjust based on your scaling
-    wire signed [31:0] gy_w = dy_7 >>> 8;
-    wire signed [31:0] Z_w  = 32'd24576 - (dx_8 >>> 11) - (dy_8 >>> 11);
-
-    wire signed [31:0] ri_s   = {28'd0, RI};
-    wire signed [31:0] eta_w  = 32'd4096 / ri_s;
-    wire signed [31:0] eta2_w = (eta_w * eta_w) >>> 12;
-
-    wire signed [31:0] g2_w    = ((gx_w * gx_w) >>> 12) + ((gy_w * gy_w) >>> 12) + 32'd4096;
-    wire signed [31:0] inner_w = g2_w - ((eta2_w * g2_w) >>> 12) + eta2_w;
-
-    // =========================================================================
-    // Stage 2 & 3 Hardware: Using DesignWare for faster Synthesis 
-    // =========================================================================
-    wire [31:0] sqrt_res;
-    // 使用 DW_sqrt 替代迴圈 function
-    DW_sqrt #(.width(32), .tc_mode(0)) U_SQRT (.a(inner_reg << 12), .root(sqrt_res));
-
-    wire [31:0] coef_q;
-    // 使用 DW_div 處理 coef = num / g2
-    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
-    U_DIV_COEF (.a((eta_reg - {16'd0, sqrt_res[15:0]}) << 12), .b(g2_reg), .quotient(coef_q), .remainder());
-
-    wire [31:0] t_q;
-    // 使用 DW_div 處理 t = Z / (eta - coef)
-    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
-    U_DIV_T (.a(Z_reg << 12), .b(eta_reg - coef_reg), .quotient(t_q), .remainder());
-
-    // Final calculations (Combinational at Stage 3)
-    wire signed [31:0] t_coef = (t_q * coef_reg) >>> 12;
-    wire signed [31:0] zx_out = ({28'd0, x_idx} << 12) + ((t_coef * gx_reg) >>> 12);
-    wire signed [31:0] zy_out = ({28'd0, y_idx} << 12) + ((t_coef * gy_reg) >>> 12);
-
-    // =========================================================================
-    // Sequential Control
-    // =========================================================================
+    // Main FSM [cite: 91, 92]
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
-            current_state <= IDLE;
-            {x_idx, y_idx} <= 8'd0;
-            DONE <= 1'b0;
+            state <= IDLE; {x_idx, y_idx} <= 8'd0; DONE <= 1'b0;
+            div_start <= 0; sqrt_start <= 0;
         end else begin
-            current_state <= next_state;
-            
-            case (current_state)
+            case (state)
+                IDLE: begin
+                    eta_reg <= 32'd4096 / RI; // 初始計算 RI [cite: 86, 116]
+                    state <= CALC_PRE;
+                end
                 CALC_PRE: begin
                     gx_reg <= gx_w; gy_reg <= gy_w; Z_reg <= Z_w;
-                    eta_reg <= eta_w; g2_reg <= g2_w; inner_reg <= inner_w;
+                    g2_reg <= ((gx_w * gx_w) >>> 12) + ((gy_w * gy_w) >>> 12) + 32'd4096;
+                    inner_reg <= g2_w - ((( (eta_reg*eta_reg)>>>12 ) * g2_w) >>> 12) + ((eta_reg*eta_reg)>>>12);
+                    sqrt_in <= inner_w << 12; sqrt_start <= 1; state <= WAIT_SQRT;
                 end
-                CALC_SQRT: begin
-                    coef_reg <= coef_q;
+                WAIT_SQRT: begin
+                    sqrt_start <= 0;
+                    if (sqrt_done) begin
+                        sqrt_reg <= sqrt_out;
+                        div_num <= (eta_reg - sqrt_out) << 12; div_den <= g2_reg;
+                        div_start <= 1; state <= WAIT_DIV1;
+                    end
                 end
+                WAIT_DIV1: begin
+                    div_start <= 0;
+                    if (div_done) begin
+                        coef_reg <= div_q;
+                        div_num <= Z_reg << 12; div_den <= eta_reg - div_q;
+                        div_start <= 1; state <= WAIT_DIV2;
+                    end
+                end
+                WAIT_DIV2: begin
+                    div_start <= 0;
+                    if (div_done) begin
+                        t_reg <= div_q; state <= WRITE_ZX;
+                    end
+                end
+                WRITE_ZX: state <= WRITE_ZY;
                 WRITE_ZY: begin
-                    if (x_idx == 4'd15) begin
-                        x_idx <= 4'd0;
-                        if (y_idx != 4'd15) y_idx <= y_idx + 1'b1;
-                    end else x_idx <= x_idx + 1'b1;
+                    if (x_idx == 15 && y_idx == 15) state <= FINISH;
+                    else begin
+                        if (x_idx == 15) begin x_idx <= 0; y_idx <= y_idx + 1; end
+                        else x_idx <= x_idx + 1;
+                        state <= CALC_PRE;
+                    end
                 end
                 FINISH: DONE <= 1'b1;
             endcase
         end
     end
 
-    always @(*) begin
-        next_state = current_state;
-        case (current_state)
-            IDLE:      next_state = CALC_PRE;
-            CALC_PRE:  next_state = CALC_SQRT;
-            CALC_SQRT: next_state = CALC_FIN;
-            CALC_FIN:  next_state = WRITE_ZX;
-            WRITE_ZX:  next_state = WRITE_ZY;
-            WRITE_ZY:  next_state = (x_idx == 15 && y_idx == 15) ? FINISH : CALC_PRE;
-            default:   next_state = IDLE;
-        endcase
+    // SRAM Data Output [cite: 160, 162, 170]
+    wire signed [31:0] t_coef = (t_reg * coef_reg) >>> 12;
+    always @(posedge CLK) begin
+        SRAM_WE <= (state == WRITE_ZX || state == WRITE_ZY);
+        SRAM_A  <= {y_idx, x_idx, (state == WRITE_ZY)};
+        SRAM_D  <= (state == WRITE_ZX) ? ({28'd0, x_idx} << 12) + ((t_coef * gx_reg) >>> 12) :
+                                         ({28'd0, y_idx} << 12) + ((t_coef * gy_reg) >>> 12);
     end
+endmodule
 
-    always @(posedge CLK or posedge RST) begin
-        if (RST) begin
-            SRAM_WE <= 1'b0; SRAM_A <= 9'd0; SRAM_D <= 16'd0;
-        end else begin
-            SRAM_WE <= 1'b0;
-            case (current_state)
-                WRITE_ZX: begin
-                    SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b0};
-                    SRAM_D  <= zx_out[15:0];
-                end
-                WRITE_ZY: begin
-                    SRAM_WE <= 1'b1;
-                    SRAM_A  <= {y_idx, x_idx, 1'b1};
-                    SRAM_D  <= zy_out[15:0];
-                end
-            endcase
-        end
+// 手寫時序除法器 (32-bit)
+module my_div(input clk, rst, start, input [31:0] num, den, output reg [31:0] q, output reg done);
+    reg [63:0] a; reg [31:0] b; reg [5:0] i; reg busy;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin busy <= 0; done <= 0; end
+        else if (start) begin busy <= 1; i <= 0; a <= {32'd0, num}; b <= den; done <= 0; end
+        else if (busy) begin
+            if (i == 32) begin q <= a[31:0]; busy <= 0; done <= 1; end
+            else begin
+                if (a[63:32] >= b) begin a[63:32] <= a[63:32] - b; a <= {a[62:0], 1'b1}; end
+                else a <= {a[62:0], 1'b0};
+                i <= i + 1;
+            end
+        end else done <= 0;
     end
+endmodule
 
+// 手寫時序開根號器 (32-bit)
+module my_sqrt(input clk, rst, start, input [31:0] in, output reg [31:0] out, output reg done);
+    reg [31:0] x, r, q; reg [5:0] i; reg busy;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin busy <= 0; done <= 0; end
+        else if (start) begin busy <= 1; i <= 15; x <= in; r <= 0; q <= 0; done <= 0; end
+        else if (busy) begin
+            wire [31:0] t = (q << (i+1)) | (32'd1 << (i<<1));
+            if (x >= t) begin x <= x - t; q <= q | (32'd1 << i); end
+            if (i == 0) begin out <= q; busy <= 0; done <= 1; end
+            else i <= i - 1;
+        end else done <= 0;
+    end
 endmodule
