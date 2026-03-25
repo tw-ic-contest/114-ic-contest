@@ -352,7 +352,7 @@
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
 
-                    /*$display("%2d %2d  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f",
+                    $display("%2d %2d  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f",
                         x_idx,
                         y_idx,
                         $itor(big_z) / 4096.0,
@@ -362,7 +362,7 @@
                         $itor(t) / 4096.0,
                         $itor($unsigned(z_x)) / 4096.0,
                         $itor($unsigned(z_y)) / 4096.0
-                    );*/
+                    );
                 end
 
                 4'd9: begin // FINISH
