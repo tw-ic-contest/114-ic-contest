@@ -214,13 +214,13 @@ always @(posedge CLK or posedge RST) begin
             4'd6: begin // WRITE_X
                 SRAM_WE <= 1'b1;
                 SRAM_A <= iteration << 1;
-                SRAM_D <= z_x[16:1];
+                SRAM_D <= z_x[15:0];
             end
 
             4'd7: begin // WRITE_Y
                 SRAM_WE <= 1'b1;
                 SRAM_A <= (iteration << 1) + 9'd1;
-                SRAM_D <= z_y[16:1];
+                SRAM_D <= z_y[15:0];
             end
 
             4'd8: begin // NEXT
