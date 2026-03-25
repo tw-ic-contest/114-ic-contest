@@ -48,6 +48,34 @@ module REFRACT(
         .root(sqrt_root), .done(sqrt_done)
     );
 
+    always @(*) begin
+        div_start = 1'b0; div_num = 32'd0; div_den = 32'd1;
+        
+        if (current_state == S_IDLE) begin
+            div_start = 1'b1;
+            div_num   = 32'sd4096;
+            div_den   = {28'd0, RI};
+        end 
+        else if (current_state == S_WAIT_SQRT && sqrt_done) begin
+            div_start = 1'b1; // 無縫接軌啟動 COEF 除法
+            div_num   = (eta_12 - {16'd0, sqrt_root}) <<< 12;
+            div_den   = g2_r;
+        end 
+        else if (current_state == S_WAIT_COEF && div_done) begin
+            div_start = 1'b1; // 無縫接軌啟動 T 除法
+            div_num   = bigZ_r <<< 12;
+            div_den   = eta_12 - div_quo; // 直接擷取 div_quo，省去等待暫存器寫入的 1 cycle
+        end
+    end
+
+    always @(*) begin
+        sqrt_start = 1'b0; sqrt_rad = 32'd0;
+        if (current_state == S_CALC_POW) begin
+            sqrt_start = 1'b1;
+            sqrt_rad   = kgg_w <<< 12;
+        end
+    end
+
     wire signed [31:0] x_val = {27'd0, x_idx};
     wire signed [31:0] y_val = {27'd0, y_idx};
 
@@ -80,24 +108,14 @@ module REFRACT(
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
             current_state <= S_IDLE;
-            x_idx <= 4'd0;
-            y_idx <= 4'd0;
-            SRAM_WE <= 1'b0;
-            DONE <= 1'b0;
-            div_start <= 1'b0;
-            sqrt_start <= 1'b0;
+            x_idx <= 4'd0; y_idx <= 4'd0;
+            SRAM_WE <= 1'b0; DONE <= 1'b0;
         end else begin
-            // Defaults
-            SRAM_WE <= 1'b0;
-            div_start <= 1'b0;
-            sqrt_start <= 1'b0;
+            SRAM_WE <= 1'b0; // Default off to prevent glitches
             DONE <= (current_state == S_FINISH) ? 1'b1 : 1'b0;
 
             case (current_state)
                 S_IDLE: begin
-                    div_num <= 32'sd4096;
-                    div_den <= {28'd0, RI}; 
-                    div_start <= 1'b1;
                     current_state <= S_WAIT_ETA;
                 end
 
@@ -110,22 +128,14 @@ module REFRACT(
                 end
 
                 S_CALC_POW: begin
-                    gx_r <= gx_w;
-                    gy_r <= gy_w;
-                    bigZ_r <= bigZ_w;
-                    g2_r <= g2_w;
-                    
-                    sqrt_rad <= kgg_w <<< 12; 
-                    sqrt_start <= 1'b1;
+                    gx_r <= gx_w; gy_r <= gy_w;
+                    bigZ_r <= bigZ_w; g2_r <= g2_w;
                     current_state <= S_WAIT_SQRT;
                 end
 
                 S_WAIT_SQRT: begin
                     if (sqrt_done) begin
                         sqrt_kgg_12 <= {16'd0, sqrt_root};
-                        div_num <= (eta_12 - {16'd0, sqrt_root}) <<< 12;
-                        div_den <= g2_r;
-                        div_start <= 1'b1;
                         current_state <= S_WAIT_COEF;
                     end
                 end
@@ -133,9 +143,6 @@ module REFRACT(
                 S_WAIT_COEF: begin
                     if (div_done) begin
                         coef_12 <= div_quo;
-                        div_num <= bigZ_r <<< 12;
-                        div_den <= eta_12 - div_quo;
-                        div_start <= 1'b1;
                         current_state <= S_WAIT_T;
                     end
                 end
@@ -163,8 +170,7 @@ module REFRACT(
                         current_state <= S_FINISH;
                     end else begin
                         if (x_idx == 4'd15) begin
-                            x_idx <= 4'd0;
-                            y_idx <= y_idx + 1'b1;
+                            x_idx <= 4'd0; y_idx <= y_idx + 1'b1;
                         end else begin
                             x_idx <= x_idx + 1'b1;
                         end
