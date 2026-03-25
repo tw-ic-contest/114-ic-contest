@@ -228,16 +228,17 @@ always @(posedge CLK or posedge RST) begin
                 if (iteration != 9'd255)
                     iteration <= iteration + 9'd1;
 
-                    $display("(%0d,%0d) -> (%f,%f) | kgg=%f sqrt=%f coef=%f t=%f",
-                        x_idx,
-                        y_idx,
-                        $itor(z_x) / 4096.0,
-                        $itor(z_y) / 4096.0,
-                        $itor(kgg) / 4096.0,
-                        $itor(sqrt_kgg_r) / 4096.0,
-                        $itor(coef) / 4096.0,
-                        $itor(t) / 4096.0
-                    );
+                $display("%2d %2d  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f",
+                    x_idx,
+                    y_idx,
+                    $itor(big_z) / 4096.0,
+                    $itor(g2) / 4096.0,
+                    $itor(sqrt_kgg_r) / 4096.0,
+                    $itor(coef) / 4096.0,
+                    $itor(t) / 4096.0,
+                    $itor($unsigned(z_x)) / 4096.0,
+                    $itor($unsigned(z_y)) / 4096.0
+                );
             end
 
             4'd9: begin // FINISH
