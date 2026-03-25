@@ -88,7 +88,7 @@ assign mul_eta2_g2_w = $signed(eta2) * $signed(g2_w); // eta2 * g2 (Q4.12 * Q4.1
 
 assign eta2_g2_q412_w = mul_eta2_g2_w >>> 12; // eta2 * g2 (back to Q4.12)
 
-assign kgg_w = g2_w - eta2_g2_q412_w + 17'sd4096; // kgg = g2 - eta2 * g2 + 1
+assign kgg_w = g2_w - eta2_g2_q412_w + $signed({1'b0, eta2}); // kgg = g2 - eta2 * g2 + eta2
 
 
 
