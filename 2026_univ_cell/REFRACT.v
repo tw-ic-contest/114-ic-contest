@@ -9,8 +9,12 @@ module REFRACT(
     output reg         DONE
 );
 
+    // --- 狀態定義 ---
     reg [3:0] state, next_state;
     reg [8:0] iteration;
+    reg [5:0] cnt; // 用於計數除法與開根號的週期
+
+    // --- 暫存器 ---
     reg signed [16:0] big_x, big_y, big_z;
     reg signed [15:0] x8, y8, gx, gy, gx2, gy2;
     reg signed [16:0] g2;
@@ -19,26 +23,32 @@ module REFRACT(
     reg signed [15:0] sqrt_kgg_r;
     reg signed [16:0] coef, t, z_x, z_y;
 
-    // --- 這裡保留你原本使用的所有 DW 元件 ---
-    wire [31:0] eta_w, div1_q, div2_q, sqrt_q;
-    
-    // eta = 1/RI (Q4.12)
-    DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
-    U_ETA (.a(32'd1 << 24), .b({28'd0, RI}), .quotient(eta_w), .remainder());
+    // --- 手寫除法器介面 ---
+    reg [31:0] div_num;
+    reg [31:0] div_den;
+    wire [31:0] div_q;
+    reg div_start;
+    wire div_done;
 
-    // sqrt(k*g2)
-    DW_sqrt #(.width(32), .tc_mode(0)) 
-    U_SQRT (.a(kgg[31] ? 32'd0 : (kgg << 12)), .root(sqrt_q));
+    // --- 手寫開根號介面 ---
+    reg [31:0] sqrt_in;
+    wire [15:0] sqrt_out;
+    reg sqrt_start;
+    wire sqrt_done;
 
-    // coef = (eta - sqrt) / g2
-    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
-    U_DIV1 (.a(($signed({1'b0, eta}) - $signed(sqrt_kgg_r)) << 12), .b({{15{g2[16]}}, g2}), .quotient(div1_q), .remainder());
+    // --- 實例化手寫模組 ---
+    divider u_div (
+        .clk(CLK), .rst(RST), .start(div_start),
+        .num(div_num), .den(div_den),
+        .quotient(div_q), .done(div_done)
+    );
 
-    // t = -Z / (-eta + coef)
-    DW_div #(.a_width(32), .b_width(32), .tc_mode(1)) 
-    U_DIV2 (.a((-big_z) << 12), .b($signed(coef) - $signed({1'b0, eta})), .quotient(div2_q), .remainder());
+    sqrt_module u_sqrt (
+        .clk(CLK), .rst(RST), .start(sqrt_start),
+        .in(sqrt_in), .out(sqrt_out), .done(sqrt_done)
+    );
 
-    // --- 連乘積邏輯 (修正位移以保留精度) ---
+    // --- 連乘積邏輯 (與原本一致) ---
     wire signed [16:0] ax = (big_x - 17'sd32768) >>> 3; 
     wire signed [16:0] ay = (big_y - 17'sd32768) >>> 3;
     wire signed [16:0] ax2 = (ax * ax) >>> 12;
@@ -50,52 +60,86 @@ module REFRACT(
     wire signed [16:0] ay7 = (ay4 * (ay * ay2 >>> 12)) >>> 12;
     wire signed [16:0] ay8 = (ay4 * ay4) >>> 12;
 
+    // --- 主狀態機 ---
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
             state <= 4'd0; iteration <= 9'd0; DONE <= 1'b0; SRAM_WE <= 1'b0;
+            div_start <= 1'b0; sqrt_start <= 1'b0;
         end else begin
-            state <= next_state;
             case (state)
-                4'd0: begin // INIT
-                    eta <= eta_w[15:0];
-                    eta2 <= (eta_w[15:0] * eta_w[15:0]) >> 12;
-                    iteration <= 9'd0; DONE <= 1'b0;
+                4'd0: begin // INIT: 計算 eta = 1/RI
+                    if (!div_start && !div_done) begin
+                        div_num <= 32'd1 << 24;
+                        div_den <= {28'd0, RI};
+                        div_start <= 1'b1;
+                    end else if (div_done) begin
+                        div_start <= 1'b0;
+                        eta <= div_q[15:0];
+                        eta2 <= (div_q[15:0] * div_q[15:0]) >> 12;
+                        state <= 4'd1;
+                    end
                 end
                 4'd1: begin // GET_COOR
                     big_x <= {1'b0, iteration[3:0], 12'd0};
                     big_y <= {1'b0, iteration[7:4], 12'd0};
                     SRAM_WE <= 1'b0;
+                    state <= 4'd2;
                 end
-                4'd2: begin // COMPUTING
+                4'd2: begin // COMPUTING: 幾何形狀
                     x8 <= ax8[15:0]; y8 <= ay8[15:0];
                     gx <= (ax7 << 1); gy <= (ay7 << 1);
+                    state <= 4'd3;
                 end    
-                4'd3: begin // COMPUTING_2
+                4'd3: begin // COMPUTING_2: Z 與 法向量平方
                     big_z <= 17'sd24576 - (x8 << 1) - (y8 << 1);
                     gx2 <= (gx * gx) >>> 12; gy2 <= (gy * gy) >>> 12;
+                    state <= 4'd4;
                 end
-                4'd4: begin // COMPUTING_3
+                4'd4: begin // COMPUTING_3: g2 與 kgg
                     g2 <= $signed(gx2) + $signed(gy2) + 17'sd4096;
-                    // kgg = g2 - eta2*g2 + eta2
                     kgg <= ($signed(gx2) + $signed(gy2) + 17'sd4096) - (((eta2 * ($signed(gx2) + $signed(gy2) + 17'sd4096)) >>> 12) - {1'b0, eta2});
+                    state <= 4'd5;
                 end
-                4'd5: begin // COMPUTING_4
-                    sqrt_kgg_r <= sqrt_q[15:0];
-                    coef <= div1_q[16:0];
+                4'd5: begin // COMPUTING_4: 開根號與 coef 除法
+                    if (!sqrt_start && !sqrt_done) begin
+                        sqrt_in <= (kgg[31] ? 32'd0 : (kgg << 12));
+                        sqrt_start <= 1'b1;
+                    end else if (sqrt_done && !div_start) begin
+                        sqrt_start <= 1'b0;
+                        sqrt_kgg_r <= sqrt_out;
+                        div_num <= ($signed({1'b0, eta}) - $signed(sqrt_out)) << 12;
+                        div_den <= {{15{g2[16]}}, g2};
+                        div_start <= 1'b1;
+                    end else if (div_done) begin
+                        div_start <= 1'b0;
+                        coef <= div_q[16:0];
+                        state <= 4'd6;
+                    end
                 end            
-                4'd6: begin // COMPUTING_5
-                    t <= div2_q[16:0];
+                4'd6: begin // COMPUTING_5: t 除法
+                    if (!div_start && !div_done) begin
+                        div_num <= (-big_z) << 12;
+                        div_den <= $signed(coef) - $signed({1'b0, eta});
+                        div_start <= 1'b1;
+                    end else if (div_done) begin
+                        div_start <= 1'b0;
+                        t <= div_q[16:0];
+                        state <= 4'd7;
+                    end
                 end
-                4'd7: begin // PRE_WRITE
+                4'd7: begin // PRE_WRITE: 折射點
                     z_x <= big_x + (((t * coef) >>> 12) * gx >>> 12);
                     z_y <= big_y + (((t * coef) >>> 12) * gy >>> 12);
+                    state <= 4'd8;
                 end
                 4'd8: begin // WRITE_X
                     SRAM_WE <= 1'b1; SRAM_A <= iteration << 1; SRAM_D <= z_x[15:0];
+                    state <= 4'd9;
                 end
                 4'd9: begin // WRITE_Y
                     SRAM_WE <= 1'b1; SRAM_A <= (iteration << 1) + 9'd1; SRAM_D <= z_y[15:0];
-                    iteration <= iteration + 9'd1; // 修正：在這裡累加，確保跑完 256 次
+                    iteration <= iteration + 9'd1;
+                    state <= (iteration == 9'd255) ? 4'd10 : 4'd1;
                 end
                 4'd10: begin // FINISH
                     SRAM_WE <= 1'b0; DONE <= 1'b1;
@@ -104,20 +148,79 @@ module REFRACT(
         end
     end
 
-    always @(*) begin
-        case (state)
-            4'd0: next_state = 4'd1;
-            4'd1: next_state = 4'd2;
-            4'd2: next_state = 4'd3;
-            4'd3: next_state = 4'd4;
-            4'd4: next_state = 4'd5;
-            4'd5: next_state = 4'd6;
-            4'd6: next_state = 4'd7; 
-            4'd7: next_state = 4'd8;
-            4'd8: next_state = 4'd9;
-            4'd9: next_state = (iteration == 9'd255) ? 4'd10 : 4'd1;
-            4'd10: next_state = 4'd10;
-            default: next_state = 4'd0;
-        endcase
+endmodule
+
+// --- 手寫非還原除法器 (32-bit) ---
+module divider (
+    input clk, rst, start,
+    input [31:0] num, den,
+    output reg [31:0] quotient,
+    output reg done
+);
+    reg [63:0] temp_num;
+    reg [31:0] temp_den;
+    reg [5:0] count;
+    reg busy;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            busy <= 0; done <= 0;
+        end else if (start && !busy) begin
+            busy <= 1; done <= 0;
+            count <= 0;
+            temp_num <= {32'd0, num};
+            temp_den <= den;
+        end else if (busy) begin
+            if (count < 32) begin
+                if (temp_num[63:31] >= {1'b0, temp_den}) begin
+                    temp_num[63:31] <= temp_num[63:31] - temp_den;
+                    temp_num <= {temp_num[62:0], 1'b1};
+                end else begin
+                    temp_num <= {temp_num[62:0], 1'b0};
+                end
+                count <= count + 1;
+            end else begin
+                quotient <= temp_num[31:0];
+                busy <= 0; done <= 1;
+            end
+        end else begin
+            done <= 0;
+        end
+    end
+endmodule
+
+// --- 手寫逐位開根號器 (32-bit) ---
+module sqrt_module (
+    input clk, rst, start,
+    input [31:0] in,
+    output reg [15:0] out,
+    output reg done
+);
+    reg [31:0] x, y, res;
+    reg [4:0] count;
+    reg busy;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            busy <= 0; done <= 0;
+        end else if (start && !busy) begin
+            busy <= 1; done <= 0;
+            count <= 15;
+            x <= in; y <= 0; res <= 0;
+        end else if (busy) begin
+            wire [31:0] t = (res << (count + 1)) | (32'd1 << (count << 1));
+            if (x >= t) begin
+                x <= x - t;
+                res <= res | (32'd1 << count);
+            end
+            if (count == 0) begin
+                out <= res[15:0];
+                busy <= 0; done <= 1;
+            end else begin
+                count <= count - 1;
+            end
+        end else begin
+            done <= 0;
+        end
     end
 endmodule
