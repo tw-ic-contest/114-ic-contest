@@ -1,3 +1,4 @@
+`timescale 1ns/10ps
 module top (
     input  [31:0] in1,
     input  [31:0] in2,
