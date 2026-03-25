@@ -19,6 +19,20 @@
     reg signed [16:0] big_x;
     reg signed [16:0] big_y;
 
+    reg signed [16:0] ax;
+    reg signed [16:0] ay;
+
+    reg signed [16:0] ax2_r;
+    reg signed [16:0] ay2_r;
+    reg signed [16:0] ax4_r;
+    reg signed [16:0] ay4_r;
+    reg signed [16:0] ax6_r;
+    reg signed [16:0] ay6_r;
+    reg signed [16:0] ax7_r;
+    reg signed [16:0] ay7_r;
+    reg signed [16:0] ax8_r;
+    reg signed [16:0] ay8_r;
+
     reg signed [15:0] x8; // 2 * ((X - 8) / 8) ^ 8
     reg signed [15:0] y8; // 2 * ((Y - 8) / 8) ^ 8
     reg signed [16:0] big_z; // z = 6 - 2 * ((X - 8) / 8) ^ 8 - 2 * ((Y - 8) / 8) ^ 8
@@ -87,26 +101,26 @@
     wire signed [16:0] ay_w;
 
     wire signed [33:0] ax2_full_w;
-    wire signed [16:0] ax2_w;
-    wire signed [33:0] ax4_full_w;
-    wire signed [16:0] ax4_w;
-    wire signed [33:0] ax6_full_w;
-    wire signed [16:0] ax6_w;
-    wire signed [33:0] ax7_full_w;
-    wire signed [16:0] ax7_w;
-    wire signed [33:0] ax8_full_w;
-    wire signed [16:0] ax8_w;
-
     wire signed [33:0] ay2_full_w;
-    wire signed [16:0] ay2_w;
+    wire signed [33:0] ax4_full_w;
     wire signed [33:0] ay4_full_w;
-    wire signed [16:0] ay4_w;
+    wire signed [33:0] ax6_full_w;
     wire signed [33:0] ay6_full_w;
-    wire signed [16:0] ay6_w;
+    wire signed [33:0] ax7_full_w;
     wire signed [33:0] ay7_full_w;
-    wire signed [16:0] ay7_w;
+    wire signed [33:0] ax8_full_w;
     wire signed [33:0] ay8_full_w;
-    wire signed [16:0] ay8_w;
+
+    wire signed [16:0] ax2_stage_w;
+    wire signed [16:0] ay2_stage_w;
+    wire signed [16:0] ax4_stage_w;
+    wire signed [16:0] ay4_stage_w;
+    wire signed [16:0] ax6_stage_w;
+    wire signed [16:0] ay6_stage_w;
+    wire signed [16:0] ax7_stage_w;
+    wire signed [16:0] ay7_stage_w;
+    wire signed [16:0] ax8_stage_w;
+    wire signed [16:0] ay8_stage_w;
 
     wire signed [16:0] gx_w;
     wire signed [16:0] gy_w;
@@ -146,50 +160,44 @@
     assign ax_w = (big_x - 17'sd32768) >>> 3; // (X - 8) / 8
     assign ay_w = (big_y - 17'sd32768) >>> 3; // (Y - 8) / 8
 
-    assign ax2_full_w = ax_w * ax_w;
-    assign ax2_w      = ax2_full_w >>> 12;
+    // stage 1
+    assign ax2_full_w  = ax * ax;
+    assign ay2_full_w  = ay * ay;
+    assign ax2_stage_w = ax2_full_w >>> 12;
+    assign ay2_stage_w = ay2_full_w >>> 12;
 
-    assign ax4_full_w = ax2_w * ax2_w;
-    assign ax4_w      = ax4_full_w >>> 12;
+    // stage 2
+    assign ax4_full_w  = ax2_r * ax2_r;
+    assign ay4_full_w  = ay2_r * ay2_r;
+    assign ax4_stage_w = ax4_full_w >>> 12;
+    assign ay4_stage_w = ay4_full_w >>> 12;
 
-    assign ax6_full_w = ax4_w * ax2_w;
-    assign ax6_w      = ax6_full_w >>> 12;
+    // stage 3
+    assign ax6_full_w  = ax4_r * ax2_r;
+    assign ay6_full_w  = ay4_r * ay2_r;
+    assign ax8_full_w  = ax4_r * ax4_r;
+    assign ay8_full_w  = ay4_r * ay4_r;
+    assign ax6_stage_w = ax6_full_w >>> 12;
+    assign ay6_stage_w = ay6_full_w >>> 12;
+    assign ax8_stage_w = ax8_full_w >>> 12;
+    assign ay8_stage_w = ay8_full_w >>> 12;
 
-    assign ax7_full_w = ax6_w * ax_w;
-    assign ax7_w      = ax7_full_w >>> 12;
+    // stage 4
+    assign ax7_full_w  = ax6_r * ax;
+    assign ay7_full_w  = ay6_r * ay;
+    assign ax7_stage_w = ax7_full_w >>> 12;
+    assign ay7_stage_w = ay7_full_w >>> 12;
 
-    assign ay2_full_w = ay_w * ay_w;
-    assign ay2_w      = ay2_full_w >>> 12;
-
-    assign ay4_full_w = ay2_w * ay2_w;
-    assign ay4_w      = ay4_full_w >>> 12;
-
-    assign ay6_full_w = ay4_w * ay2_w;
-    assign ay6_w      = ay6_full_w >>> 12;
-
-    assign ay7_full_w = ay6_w * ay_w;
-    assign ay7_w      = ay7_full_w >>> 12;
-
-    assign gx_w = ax7_w <<< 1; // gx = ax7 * 2
-    assign gy_w = ay7_w <<< 1; // gy = ax7 * 2
+    assign gx_w = ax7_r <<< 1;
+    assign gy_w = ay7_r <<< 1;
 
     assign gx2_full_w = gx_w * gx_w;
-    assign gx2_w      = gx2_full_w >>> 12;
-
     assign gy2_full_w = gy_w * gy_w;
+    assign gx2_w      = gx2_full_w >>> 12;
     assign gy2_w      = gy2_full_w >>> 12;
 
-    // -----------------------------
-    // compute x8, y8
-    // -----------------------------
-
-    assign ax8_full_w = ax4_w * ax4_w;
-    assign ax8_w = ax8_full_w >>> 12;
-    assign x8_w = ax8_w <<< 1;
-
-    assign ay8_full_w = ay4_w * ay4_w;
-    assign ay8_w = ay8_full_w >>> 12;
-    assign y8_w = ay8_w <<< 1;
+    assign x8_w = ax8_r <<< 1;
+    assign y8_w = ay8_r <<< 1;
 
 
     // -----------------------------
@@ -274,17 +282,33 @@
 
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
-            state   <= 4'd0;
-            SRAM_A  <= 9'd0;
-            SRAM_D  <= 16'd0;
-            SRAM_WE <= 1'd0;
-            DONE <= 1'd0;
-            iteration <= 9'd0;
-            x_idx <= 4'd0;
-            y_idx <= 4'd0;
-            z_x <= 17'd0;
-            z_y <= 17'd0;
-            big_z <= 16'd0;
+            ax <= 17'd0;
+            ay <= 17'd0;
+
+            ax2_r <= 17'd0;
+            ay2_r <= 17'd0;
+            ax4_r <= 17'd0;
+            ay4_r <= 17'd0;
+            ax6_r <= 17'd0;
+            ay6_r <= 17'd0;
+            ax7_r <= 17'd0;
+            ay7_r <= 17'd0;
+            ax8_r <= 17'd0;
+            ay8_r <= 17'd0;
+
+            gx <= 16'd0;
+            gy <= 16'd0;
+            gx2 <= 16'd0;
+            gy2 <= 16'd0;
+            x8 <= 16'd0;
+            y8 <= 16'd0;
+            g2 <= 17'd0;
+            eta <= 16'd0;
+            eta2 <= 16'd0;
+            kgg <= 32'd0;
+            sqrt_kgg_r <= 16'd0;
+            coef <= 17'd0;
+            t <= 17'd0;
             
             //add all the variables later
 
@@ -302,75 +326,84 @@
                     x_idx <= iteration[3:0];
                     y_idx <= iteration[7:4];
 
-                    big_x <= $signed({1'b0, iteration[3:0], 12'd0}); // x * 4096, Q4.12
-                    big_y <= $signed({1'b0, iteration[7:4], 12'd0}); // y * 4096, Q4.12
+                    big_x <= $signed({1'b0, iteration[3:0], 12'd0});
+                    big_y <= $signed({1'b0, iteration[7:4], 12'd0});
+
+                    ax <= ax_w;
+                    ay <= ay_w;
                 end
 
-                4'd2: begin // COMPUTING
-                    big_z <= big_z_w;
-                    x8 <= x8_w;
-                    y8 <= y8_w;
-                    g2 <= g2_w;
+                4'd2: begin // POW_1
+                    eta  <= eta_w[27:12];
+                    eta2 <= eta2_w;
+
+                    ax2_r <= ax2_stage_w;
+                    ay2_r <= ay2_stage_w;
+                end
+
+                4'd3: begin // POW_2
+                    ax4_r <= ax4_stage_w;
+                    ay4_r <= ay4_stage_w;
+                end
+
+                4'd4: begin // POW_3
+                    ax6_r <= ax6_stage_w;
+                    ay6_r <= ay6_stage_w;
+                    ax8_r <= ax8_stage_w;
+                    ay8_r <= ay8_stage_w;
+                end
+
+                4'd5: begin // POW_4 + PREP
+                    ax7_r <= ax7_stage_w;
+                    ay7_r <= ay7_stage_w;
+
                     gx <= gx_w[15:0];
                     gy <= gy_w[15:0];
+
+                    x8 <= x8_w[15:0];
+                    y8 <= y8_w[15:0];
+                    big_z <= big_z_w;
+
+                    g2 <= g2_w;
                     kgg <= kgg_w;
-                    eta <= eta_w[27:12];
-                    eta2 <= eta2_w;
-                    // 1 / RI
-                    // eta * eta
-                end    
-                
-                
-                4'd3: begin //COMPUTING_2
+                end
+
+                4'd6: begin // SQRT
                     sqrt_kgg_r <= sqrt_kgg_w[15:0];
                 end
 
-                4'd4: begin //COMPUTING_3
+                4'd7: begin // COEF
                     coef <= coef_w[16:0];
                 end
 
-                4'd5: begin //COMPUTING_4
+                4'd8: begin // T
                     t <= t_w[16:0];
-                end            
-                            
-                4'd6: begin //COMPUTING_5
+                end
+
+                4'd9: begin // ZXZY
                     z_x <= z_x_w;
                     z_y <= z_y_w;
                 end
 
-                4'd7: begin // WRITE_X
+                4'd10: begin // WRITE_X
                     SRAM_WE <= 1'b1;
                     SRAM_A <= iteration << 1;
                     SRAM_D <= z_x[15:0];
                 end
 
-                4'd8: begin // WRITE_Y
+                4'd11: begin // WRITE_Y
                     SRAM_WE <= 1'b1;
                     SRAM_A <= (iteration << 1) + 9'd1;
                     SRAM_D <= z_y[15:0];
                 end
 
-                4'd9: begin // NEXT
+                4'd12: begin // NEXT
                     SRAM_WE <= 1'b0;
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
-
-                    /*$display("%2d %2d  eta=%8.4f eta2=%8.4f  Z=%8.4f g2=%8.4f sqrt=%8.4f coef=%8.4f t=%8.4f zx=%8.4f zy=%8.4f",
-                        x_idx,
-                        y_idx,
-                        $itor(eta) / 4096.0,
-                        $itor(eta2) / 4096.0,
-                        $itor(big_z) / 4096.0,
-                        $itor(g2) / 4096.0,
-                        $itor(sqrt_kgg_r) / 4096.0,
-                        $itor(coef) / 4096.0,
-                        $itor(t) / 4096.0,
-                        $itor($unsigned(z_x)) / 4096.0,
-                        $itor($unsigned(z_y)) / 4096.0
-                    );*/
                 end
 
-                4'd10: begin // FINISH
+                4'd13: begin // FINISH
                     SRAM_WE <= 1'b0;
                     DONE <= 1'b1;
                 end
@@ -386,17 +419,20 @@
 
     always @(*) begin
         case (state)
-            4'd0: next_state = 4'd1;
-            4'd1: next_state = 4'd2;
-            4'd2: next_state = 4'd3;
-            4'd3: next_state = 4'd4;
-            4'd4: next_state = 4'd5;
-            4'd5: next_state = 4'd6; 
-            4'd6: next_state = 4'd7;
-            4'd7: next_state = 4'd8;
-            4'd8: next_state = 4'd9;
-            4'd9: next_state = (iteration == 9'd255) ? 4'd10 : 4'd1;
-            4'd10: next_state = 4'd10;
+            4'd0:  next_state = 4'd1;
+            4'd1:  next_state = 4'd2;
+            4'd2:  next_state = 4'd3;
+            4'd3:  next_state = 4'd4;
+            4'd4:  next_state = 4'd5;
+            4'd5:  next_state = 4'd6;
+            4'd6:  next_state = 4'd7;
+            4'd7:  next_state = 4'd8;
+            4'd8:  next_state = 4'd9;
+            4'd9:  next_state = 4'd10;
+            4'd10: next_state = 4'd11;
+            4'd11: next_state = 4'd12;
+            4'd12: next_state = (iteration == 9'd255) ? 4'd13 : 4'd1;
+            4'd13: next_state = 4'd13;
             default: next_state = 4'd0;
         endcase
     end
