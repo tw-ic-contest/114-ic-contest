@@ -209,18 +209,17 @@ module REFRACT(
                 end
             endcase
         end
-        always @(posedge CLK) begin
-            if (!RST) begin
-                $display("T=%0t | state=%0d | x=%0d y=%0d | sqrt_bit=%0d | sqrt_root=%0d | inner=%0d",
-                        $time,
-                        current_state,
-                        x_idx,
-                        y_idx,
-                        sqrt_bit_reg,
-                        sqrt_root_reg,
-                        inner_12_reg);
-            end
+        if (!RST) begin
+            $display("T=%0t | state=%0d | x=%0d y=%0d | sqrt_bit=%0d | sqrt_root=%0d | inner=%0d",
+                    $time,
+                    current_state,
+                    x_idx,
+                    y_idx,
+                    sqrt_bit_reg,
+                    sqrt_root_reg,
+                    inner_12_reg);
         end
     end
+
 
 endmodule
