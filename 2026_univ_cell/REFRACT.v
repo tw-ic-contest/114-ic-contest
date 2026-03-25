@@ -282,6 +282,17 @@
 
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
+
+            state <= 4'd0;
+            next_state <= 4'd0;
+
+            iteration <= 9'd0;
+            x_idx <= 4'd0;
+            y_idx <= 4'd0;
+
+            big_x <= 17'd0;
+            big_y <= 17'd0;
+
             ax <= 17'd0;
             ay <= 17'd0;
 
@@ -296,19 +307,31 @@
             ax8_r <= 17'd0;
             ay8_r <= 17'd0;
 
+            x8 <= 16'd0;
+            y8 <= 16'd0;
+            big_z <= 17'd0;
+
             gx <= 16'd0;
             gy <= 16'd0;
             gx2 <= 16'd0;
             gy2 <= 16'd0;
-            x8 <= 16'd0;
-            y8 <= 16'd0;
             g2 <= 17'd0;
+
             eta <= 16'd0;
             eta2 <= 16'd0;
+
             kgg <= 32'd0;
             sqrt_kgg_r <= 16'd0;
             coef <= 17'd0;
             t <= 17'd0;
+
+            z_x <= 17'd0;
+            z_y <= 17'd0;
+
+            SRAM_WE <= 1'b0;
+            SRAM_A <= 9'd0;
+            SRAM_D <= 16'd0;
+            DONE <= 1'b0;
             
             //add all the variables later
 
@@ -329,8 +352,8 @@
                     big_x <= $signed({1'b0, iteration[3:0], 12'd0});
                     big_y <= $signed({1'b0, iteration[7:4], 12'd0});
 
-                    ax <= ax_w;
-                    ay <= ay_w;
+                    ax <= ($signed({1'b0, iteration[3:0], 12'd0}) - 17'sd32768) >>> 3;
+                    ay <= ($signed({1'b0, iteration[7:4], 12'd0}) - 17'sd32768) >>> 3;
                 end
 
                 4'd2: begin // POW_1
@@ -353,12 +376,17 @@
                     ay8_r <= ay8_stage_w;
                 end
 
-                4'd5: begin // POW_4 + PREP
+                4'd5: begin // POW_4
                     ax7_r <= ax7_stage_w;
                     ay7_r <= ay7_stage_w;
+                end
 
+                4'd6: begin // PREP
                     gx <= gx_w[15:0];
                     gy <= gy_w[15:0];
+
+                    gx2 <= gx2_w[15:0];
+                    gy2 <= gy2_w[15:0];
 
                     x8 <= x8_w[15:0];
                     y8 <= y8_w[15:0];
@@ -368,42 +396,42 @@
                     kgg <= kgg_w;
                 end
 
-                4'd6: begin // SQRT
+                4'd7: begin // SQRT
                     sqrt_kgg_r <= sqrt_kgg_w[15:0];
                 end
 
-                4'd7: begin // COEF
+                4'd8: begin // COEF
                     coef <= coef_w[16:0];
                 end
 
-                4'd8: begin // T
+                4'd9: begin // T
                     t <= t_w[16:0];
                 end
 
-                4'd9: begin // ZXZY
+                4'd10: begin // ZXZY
                     z_x <= z_x_w;
                     z_y <= z_y_w;
                 end
 
-                4'd10: begin // WRITE_X
+                4'd11: begin // WRITE_X
                     SRAM_WE <= 1'b1;
                     SRAM_A <= iteration << 1;
                     SRAM_D <= z_x[15:0];
                 end
 
-                4'd11: begin // WRITE_Y
+                4'd12: begin // WRITE_Y
                     SRAM_WE <= 1'b1;
                     SRAM_A <= (iteration << 1) + 9'd1;
                     SRAM_D <= z_y[15:0];
                 end
 
-                4'd12: begin // NEXT
+                4'd13: begin // NEXT
                     SRAM_WE <= 1'b0;
                     if (iteration != 9'd255)
                         iteration <= iteration + 9'd1;
                 end
 
-                4'd13: begin // FINISH
+                4'd14: begin // FINISH
                     SRAM_WE <= 1'b0;
                     DONE <= 1'b1;
                 end
@@ -431,10 +459,11 @@
             4'd9:  next_state = 4'd10;
             4'd10: next_state = 4'd11;
             4'd11: next_state = 4'd12;
-            4'd12: next_state = (iteration == 9'd255) ? 4'd13 : 4'd1;
-            4'd13: next_state = 4'd13;
+            4'd12: next_state = 4'd13;
+            4'd13: next_state = (iteration == 9'd255) ? 4'd14 : 4'd1;
+            4'd14: next_state = 4'd14;
             default: next_state = 4'd0;
         endcase
     end
 
-    endmodule
+endmodule
