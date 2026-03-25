@@ -4,11 +4,14 @@ module REFRACT(
     input  wire [3:0]  RI,   
     output reg  [8:0]  SRAM_A,
     output reg  [15:0] SRAM_D,
-    input  wire [15:0] SRAM_Q,
+    input  wire [15:0] SRAM_Q,   // unused
     output reg         SRAM_WE,
     output reg         DONE
 );
 
+    // ==========================================
+    // Compressed FSM States
+    // ==========================================
     localparam S_IDLE       = 4'd0;
     localparam S_WAIT_ETA   = 4'd1;
     localparam S_CALC_POW   = 4'd2;
@@ -26,6 +29,9 @@ module REFRACT(
     reg signed [31:0] gx_r, gy_r, bigZ_r, g2_r;
     reg signed [31:0] sqrt_kgg_12, coef_12, t_12;
     
+    // ==========================================
+    // Modules Connection
+    // ==========================================
     reg div_start;
     reg signed [31:0] div_num, div_den;
     wire signed [31:0] div_quo;
@@ -48,34 +54,9 @@ module REFRACT(
         .root(sqrt_root), .done(sqrt_done)
     );
 
-    always @(*) begin
-        div_start = 1'b0; div_num = 32'd0; div_den = 32'd1;
-        
-        if (current_state == S_IDLE) begin
-            div_start = 1'b1;
-            div_num   = 32'sd4096;
-            div_den   = {28'd0, RI};
-        end 
-        else if (current_state == S_WAIT_SQRT && sqrt_done) begin
-            div_start = 1'b1; // 無縫接軌啟動 COEF 除法
-            div_num   = (eta_12 - {16'd0, sqrt_root}) <<< 12;
-            div_den   = g2_r;
-        end 
-        else if (current_state == S_WAIT_COEF && div_done) begin
-            div_start = 1'b1; // 無縫接軌啟動 T 除法
-            div_num   = bigZ_r <<< 12;
-            div_den   = eta_12 - div_quo; // 直接擷取 div_quo，省去等待暫存器寫入的 1 cycle
-        end
-    end
-
-    always @(*) begin
-        sqrt_start = 1'b0; sqrt_rad = 32'd0;
-        if (current_state == S_CALC_POW) begin
-            sqrt_start = 1'b1;
-            sqrt_rad   = kgg_w <<< 12;
-        end
-    end
-
+    // ==========================================
+    // Combinational Math Wires (MUST be before logic)
+    // ==========================================
     wire signed [31:0] x_val = {27'd0, x_idx};
     wire signed [31:0] y_val = {27'd0, y_idx};
 
@@ -105,13 +86,47 @@ module REFRACT(
     wire signed [31:0] zx_w = (x_val <<< 12) + (t_coef_gx_w >>> 12);
     wire signed [31:0] zy_w = (y_val <<< 12) + (t_coef_gy_w >>> 12);
 
+    // ==========================================
+    // Zero-Overhead Combinational Start Logic
+    // ==========================================
+    always @(*) begin
+        div_start = 1'b0; div_num = 32'd0; div_den = 32'd1;
+        
+        if (current_state == S_IDLE) begin
+            div_start = 1'b1;
+            div_num   = 32'sd4096;
+            div_den   = {28'd0, RI};
+        end 
+        else if (current_state == S_WAIT_SQRT && sqrt_done) begin
+            div_start = 1'b1; // 無縫啟動 COEF 除法
+            div_num   = (eta_12 - {16'd0, sqrt_root}) <<< 12;
+            div_den   = g2_r;
+        end 
+        else if (current_state == S_WAIT_COEF && div_done) begin
+            div_start = 1'b1; // 無縫啟動 T 除法
+            div_num   = bigZ_r <<< 12;
+            div_den   = eta_12 - div_quo; 
+        end
+    end
+
+    always @(*) begin
+        sqrt_start = 1'b0; sqrt_rad = 32'd0;
+        if (current_state == S_CALC_POW) begin
+            sqrt_start = 1'b1;
+            sqrt_rad   = kgg_w <<< 12;
+        end
+    end
+
+    // ==========================================
+    // Main FSM
+    // ==========================================
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
             current_state <= S_IDLE;
             x_idx <= 4'd0; y_idx <= 4'd0;
             SRAM_WE <= 1'b0; DONE <= 1'b0;
         end else begin
-            SRAM_WE <= 1'b0; // Default off to prevent glitches
+            SRAM_WE <= 1'b0; 
             DONE <= (current_state == S_FINISH) ? 1'b1 : 1'b0;
 
             case (current_state)
@@ -187,6 +202,9 @@ module REFRACT(
 
 endmodule
 
+// ==========================================
+// Divider Module
+// ==========================================
 module Seq_Div (
     input  wire        clk,
     input  wire        rst,
@@ -231,6 +249,9 @@ module Seq_Div (
     end
 endmodule
 
+// ==========================================
+// Square Root Module
+// ==========================================
 module Seq_Sqrt (
     input wire clk,
     input wire rst,
