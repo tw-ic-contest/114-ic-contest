@@ -37,8 +37,8 @@ reg signed [15:0] sqrt_kgg_r;
 reg signed [16:0] coef; 
 reg signed [16:0] t;
 
-reg signed [15:0] z_x;
-reg signed [15:0] z_y;
+reg signed [16:0] z_x;
+reg signed [16:0] z_y;
 
 // -----------------------------
 // combinational helper wires
@@ -166,8 +166,8 @@ always @(posedge CLK or posedge RST) begin
         iteration <= 9'd0;
         x_idx <= 4'd0;
         y_idx <= 4'd0;
-        z_x        <= 16'd0;
-        z_y        <= 16'd0;
+        z_x        <= 17'd0;
+        z_y        <= 17'd0;
         big_z <= 16'd0;
         
         //add all the variables later
@@ -207,8 +207,8 @@ always @(posedge CLK or posedge RST) begin
             end            
                         
             4'd5: begin //COMPUTING_4
-                z_x <= z_x_w[15:0];
-                z_y <= z_y_w[15:0];
+                z_x <= z_x_w;
+                z_y <= z_y_w;
             end
 
             4'd6: begin // WRITE_X
@@ -227,7 +227,7 @@ always @(posedge CLK or posedge RST) begin
                 SRAM_WE <= 1'b0;
                 if (iteration != 9'd255)
                     iteration <= iteration + 9'd1;
-                    
+
                     $display("(%0d,%0d) -> (%f,%f) | kgg=%f sqrt=%f coef=%f t=%f",
                         x_idx,
                         y_idx,
