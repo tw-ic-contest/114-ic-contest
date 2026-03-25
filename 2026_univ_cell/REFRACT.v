@@ -14,17 +14,44 @@ reg [3:0] state;
 reg [3:0] next_state;
 reg [3:0] read_ri;
 reg [8:0] iteration;
-reg [15:0] input_x;
-reg [15:0] input_y;
+reg [3:0] x_idx;
+reg [3:0] y_idx;
 
-reg [15:0] temp_x;
-reg [15:0] temp_y;
+reg signed [16:0] big_x;
+reg signed [16:0] big_y;
+
+reg signed [15:0] x8; // 2 * ((X - 8) / 8) ^ 8
+reg signed [15:0] y8; // 2 * ((Y - 8) / 8) ^ 8
+reg signed [15:0] big_z; // z = 6 - 2 * ((X - 8) / 8) ^ 8 - 2 * ((Y - 8) / 8) ^ 8
+
+reg signed [15:0] gx; // 2 * ((X - 8) / 8) ^ 7
+reg signed [15:0] gy; // 2 * ((X - 8) / 8) ^ 7
+reg [15:0] gx2; // gx ^ 2
+reg [15:0] gy2; // gy ^ 2
+reg [16:0] g2; // g ^ 2 = gx ^ 2 + gy ^ 2 + 1
+
+reg [15:0] eta;
+reg [15:0] eta2;
+
+reg signed [31:0] kgg;
+reg signed [15:0] sqrt_kgg;
+reg signed [16:0] eta_m_sqrt_kgg;
+reg signed [16:0] coef; 
+reg signed [16:0] eta_m_coef;ength
+reg signed [16:0] t; //length
 
 reg [15:0] z_x;
 reg [15:0] z_y;
 
-reg [15:0] z_output;
 
+DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
+U_DIV (.a(eta_m_sqrt_kgg), .b(g2), .quotient(coef), .remainder());
+
+DW_div #(.a_width(32), .b_width(32), .tc_mode(0)) 
+U_DIV (.a(big_z), .b(eta_m_coef), .quotient(t), .remainder());
+
+DW_sqrt #(.width(32), .tc_mode(0)) 
+U_SQRT (.a(kgg), .root(sqrt_kgg));
 
 always @(posedge CLK or posedge RST) begin
     if (RST) begin
@@ -35,6 +62,14 @@ always @(posedge CLK or posedge RST) begin
         DONE    <= 1'd0;
         read_ri <= 4'd0;
         iteration <= 9'd0;
+        x_idx <= 4'd0;
+        y_idx <= 4'd0;
+        z_x        <= 16'd0;
+        z_y        <= 16'd0;
+        big_z <= 16'd0;
+        
+        //add all the variables later
+
     end
     else begin
         state <= next_state;
@@ -43,51 +78,60 @@ always @(posedge CLK or posedge RST) begin
             4'd0: begin // INIT
                 read_ri <= RI;
                 iteration <= 9'd0;
-                SRAM_WE <= 1'b0;
                 DONE <= 1'b0;
             end
 
-            4'd1: begin // READ_X_ADDR
-                SRAM_A  <= iteration << 1;
+            4'd1: begin // GET_COOR
+                x_idx <= iteration[3:0];
+                y_idx <= iteration[7:4];
+                big_x <= $signed({1'b0, iteration[3:0], 12'd0}); // x * 4096, Q4.12
+                big_y <= $signed({1'b0, iteration[7:4], 12'd0}); // y * 4096, Q4.12
             end
 
-            4'd2: begin // READ_X_DATA
-                input_x <= SRAM_Q;
+            4'd2: begin // COMPUTING
+                big_z <= {4'd6, 12'd0} - x8 - y8;
+                g2 <= gx2 + gy2 + {4'd1, 12'd0};
+            end    
+               
+               
+            4'd3: begin //COMPUTING_2
+                kgg <= g2 - eta2 * g2 + {4'd1, 12'd0};
+                //sqrt(kgg)
             end
 
-            4'd3: begin // READ_Y_ADDR
-                SRAM_A  <= (iteration << 1) + 9'd1;
+            4'd4: begin //COMPUTING_3
+                eta_m_sqrt_kgg <= eta - sqrt_kgg;
+                //coef
+            end            
+
+            4'd5: begin //COMPUTING_4
+                eta_m_coef <= eta - coef;
+                //t
+            end           
+                        
+            4'd6: begin //COMPUTING_5
+                z_x <= big_x + t * coef * gx;
+                z_y <= big_y + t * coef * gy;
             end
 
-            4'd4: begin // READ_Y_DATA
-                input_y <= SRAM_Q;
-            end
-
-            4'd5: begin // COMPUTING
-
-                //temp_x = (input_x - (16'd8 << 12)) >>> 3;
-                z_x = input_x;
-                z_y = input_y;
-            end
-
-            4'd6: begin // WRITE_X
+            4'd7: begin // WRITE_X
                 SRAM_WE <= 1'b1;
                 SRAM_A <= iteration << 1;
                 SRAM_D <= z_x;
             end
 
-            4'd7: begin // WRITE_Y
+            4'd8: begin // WRITE_Y
                 SRAM_WE <= 1'b1;
                 SRAM_A <= (iteration << 1) + 9'd1;
                 SRAM_D <= z_y;
             end
 
-            4'd8: begin // NEXT
+            4'd9: begin // NEXT
                 SRAM_WE <= 1'b0;
                 iteration <= iteration + 9'd1;
             end
 
-            4'd9: begin // FINISH
+            4'd10: begin // FINISH
                 SRAM_WE <= 1'b0;
                 DONE <= 1'b1;
             end
@@ -97,23 +141,196 @@ always @(posedge CLK or posedge RST) begin
             end
         endcase
 
-        $display("t=%0t | state=%0d iter=%0d | A=%0d Q=%0d | D=%0d WE=%0d DONE=%0d",
-                 $time, state, iteration, SRAM_A, SRAM_Q, SRAM_D, SRAM_WE, DONE);
+        //$display("t=%0t | state=%0d iter=%0d | A=%0d Q=%0d | D=%0d WE=%0d DONE=%0d",
+        //         $time, state, iteration, SRAM_A, SRAM_Q, SRAM_D, SRAM_WE, DONE);
     end
 end
 
 always @(*) begin
+    case(x_idx)
+        4'd0:  x8 = 16'h2000;
+        4'd1:  x8 = 16'h0aff;
+        4'd2:  x8 = 16'h0334;
+        4'd3:  x8 = 16'h00bf;
+        4'd4:  x8 = 16'h0020;
+        4'd5:  x8 = 16'h0003;
+        4'd6:  x8 = 16'h0000;
+        4'd7:  x8 = 16'h0000;
+        4'd8:  x8 = 16'h0000;
+        4'd9:  x8 = 16'h0000;
+        4'd10: x8 = 16'h0000;
+        4'd11: x8 = 16'h0003;
+        4'd12: x8 = 16'h0020;
+        4'd13: x8 = 16'h00bf;
+        4'd14: x8 = 16'h0334;
+        4'd15: x8 = 16'h0aff;
+        default: x8 = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(y_idx)
+        4'd0:  y8 = 16'h2000;
+        4'd1:  y8 = 16'h0aff;
+        4'd2:  y8 = 16'h0334;
+        4'd3:  y8 = 16'h00bf;
+        4'd4:  y8 = 16'h0020;
+        4'd5:  y8 = 16'h0003;
+        4'd6:  y8 = 16'h0000;
+        4'd7:  y8 = 16'h0000;
+        4'd8:  y8 = 16'h0000;
+        4'd9:  y8 = 16'h0000;
+        4'd10: y8 = 16'h0000;
+        4'd11: y8 = 16'h0003;
+        4'd12: y8 = 16'h0020;
+        4'd13: y8 = 16'h00bf;
+        4'd14: y8 = 16'h0334;
+        4'd15: y8 = 16'h0aff;
+        default: y8 = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(x_idx)
+        4'd0:  gx = 16'he000; // -2.0000
+        4'd1:  gx = 16'hf36f; // -0.7854
+        4'd2:  gx = 16'hfbba; // -0.2670
+        4'd3:  gx = 16'hfecf; // -0.0745
+        4'd4:  gx = 16'hffc0; // -0.0156
+        4'd5:  gx = 16'hfff7; // -0.0021
+        4'd6:  gx = 16'h0000; // ~0
+        4'd7:  gx = 16'h0000; // ~0
+        4'd8:  gx = 16'h0000; // 0.0000
+        4'd9:  gx = 16'h0000; // ~0
+        4'd10: gx = 16'h0000; // ~0
+        4'd11: gx = 16'h0009; // 0.0021
+        4'd12: gx = 16'h0040; // 0.0156
+        4'd13: gx = 16'h0131; // 0.0745
+        4'd14: gx = 16'h0446; // 0.2670
+        4'd15: gx = 16'h0c91; // 0.7854
+        default: gx = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(y_idx)
+        4'd0:  gy = 16'he000;
+        4'd1:  gy = 16'hf36f;
+        4'd2:  gy = 16'hfbba;
+        4'd3:  gy = 16'hfecf;
+        4'd4:  gy = 16'hffc0;
+        4'd5:  gy = 16'hfff7;
+        4'd6:  gy = 16'h0000;
+        4'd7:  gy = 16'h0000;
+        4'd8:  gy = 16'h0000;
+        4'd9:  gy = 16'h0000;
+        4'd10: gy = 16'h0000;
+        4'd11: gy = 16'h0009;
+        4'd12: gy = 16'h0040;
+        4'd13: gy = 16'h0131;
+        4'd14: gy = 16'h0446;
+        4'd15: gy = 16'h0c91;
+        default: gy = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(x_idx)
+        4'd0:  gx2 = 16'h4000;
+        4'd1:  gx2 = 16'h09df;
+        4'd2:  gx2 = 16'h0124;
+        4'd3:  gx2 = 16'h0017;
+        4'd4:  gx2 = 16'h0001;
+        4'd5:  gx2 = 16'h0000;
+        4'd6:  gx2 = 16'h0000;
+        4'd7:  gx2 = 16'h0000;
+        4'd8:  gx2 = 16'h0000;
+        4'd9:  gx2 = 16'h0000;
+        4'd10: gx2 = 16'h0000;
+        4'd11: gx2 = 16'h0000;
+        4'd12: gx2 = 16'h0001;
+        4'd13: gx2 = 16'h0017;
+        4'd14: gx2 = 16'h0124;
+        4'd15: gx2 = 16'h09df;
+        default: gx2 = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(y_idx)
+        4'd0:  gy2 = 16'h4000;
+        4'd1:  gy2 = 16'h09df;
+        4'd2:  gy2 = 16'h0124;
+        4'd3:  gy2 = 16'h0017;
+        4'd4:  gy2 = 16'h0001;
+        4'd5:  gy2 = 16'h0000;
+        4'd6:  gy2 = 16'h0000;
+        4'd7:  gy2 = 16'h0000;
+        4'd8:  gy2 = 16'h0000;
+        4'd9:  gy2 = 16'h0000;
+        4'd10: gy2 = 16'h0000;
+        4'd11: gy2 = 16'h0000;
+        4'd12: gy2 = 16'h0001;
+        4'd13: gy2 = 16'h0017;
+        4'd14: gy2 = 16'h0124;
+        4'd15: gy2 = 16'h09df;
+        default: gy2 = 16'h0000;
+    endcase
+end
+    
+always @(*) begin
+    case(RI)
+        4'd2:  eta = 16'h0800;
+        4'd3:  eta = 16'h0555;
+        4'd4:  eta = 16'h0400;
+        4'd5:  eta = 16'h0333;
+        4'd6:  eta = 16'h02ab;
+        4'd7:  eta = 16'h0249;
+        4'd8:  eta = 16'h0200;
+        4'd9:  eta = 16'h01c7;
+        4'd10: eta = 16'h019a;
+        4'd11: eta = 16'h0174;
+        4'd12: eta = 16'h0155;
+        4'd13: eta = 16'h013b;
+        4'd14: eta = 16'h0125;
+        4'd15: eta = 16'h0111;
+        default: eta = 16'h0000;
+    endcase
+end
+
+always @(*) begin
+    case(RI)
+        4'd2:  eta2 = 16'h0400;
+        4'd3:  eta2 = 16'h01c7;
+        4'd4:  eta2 = 16'h0100;
+        4'd5:  eta2 = 16'h00a4;
+        4'd6:  eta2 = 16'h0072;
+        4'd7:  eta2 = 16'h0054;
+        4'd8:  eta2 = 16'h0040;
+        4'd9:  eta2 = 16'h0033;
+        4'd10: eta2 = 16'h0029;
+        4'd11: eta2 = 16'h0022;
+        4'd12: eta2 = 16'h001c;
+        4'd13: eta2 = 16'h0018;
+        4'd14: eta2 = 16'h0015;
+        4'd15: eta2 = 16'h0012;
+        default: eta2 = 16'h0000;
+    endcase
+end
+
+always @(*) begin
     case (state)
-        4'd0: next_state = 4'd1;                              // INIT -> READ_X_ADDR
-        4'd1: next_state = 4'd2;                              // READ_X_ADDR -> READ_X_DATA
-        4'd2: next_state = 4'd3;                              // READ_X_DATA -> READ_Y_ADDR
-        4'd3: next_state = 4'd4;                              // READ_Y_ADDR -> READ_Y_DATA
-        4'd4: next_state = 4'd5;                              // READ_Y_DATA -> COMPUTING
-        4'd5: next_state = 4'd6;                              // COMPUTING -> WRITE_X
-        4'd6: next_state = 4'd7;                              // WRITE_X -> WRITE_Y
-        4'd7: next_state = 4'd8;                              // WRITE_Y -> NEXT
-        4'd8: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1; // NEXT -> FINISH / READ_X_ADDR
-        4'd9: next_state = 4'd9;                              // FINISH
+        4'd0: next_state = 4'd1;
+        4'd1: next_state = 4'd2;
+        4'd2: next_state = 4'd3;
+        4'd3: next_state = 4'd4;
+        4'd4: next_state = 4'd5;
+        4'd5: next_state = 4'd6; 
+        4'd6: next_state = 4'd7;
+        4'd7: next_state = 4'd8;
+        4'd8: next_state = 4'd9;
+        4'd9: next_state = (iteration == 9'd255) ? 4'd9 : 4'd1;
+        4'd10: next_state = 4'd10;
         default: next_state = 4'd0;
     endcase
 end
