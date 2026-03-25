@@ -110,7 +110,7 @@ U_SQRT (.a(sqrt_in_w), .root(sqrt_kgg_w));
 // keep quotient in Q4.12 => numerator << 12
 // -----------------------------
 
-assign eta_m_sqrt_kgg_w = $signed({1'b0, eta}) - $signed({1'b0, sqrt_kgg_r}); // eta - sqrt_kgg
+assign eta_m_sqrt_kgg_w = $signed({1'b0, eta}) - $signed(sqrt_kgg_w[15:0]); // eta - sqrt_kgg
 
 assign coef_num_w = $signed(eta_m_sqrt_kgg_w) <<< 12; //shift for numeration of divider (Q4.12 -> Q8.24)
 
