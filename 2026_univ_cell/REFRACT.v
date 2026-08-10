@@ -98,12 +98,12 @@ module REFRACT(
             div_den   = {28'd0, RI};
         end 
         else if (current_state == S_WAIT_SQRT && sqrt_done) begin
-            div_start = 1'b1; // 無縫啟動 COEF 除法
+            div_start = 1'b1;
             div_num   = (eta_12 - {16'd0, sqrt_root}) <<< 12;
             div_den   = g2_r;
         end 
         else if (current_state == S_WAIT_COEF && div_done) begin
-            div_start = 1'b1; // 無縫啟動 T 除法
+            div_start = 1'b1;
             div_num   = bigZ_r <<< 12;
             div_den   = eta_12 - div_quo; 
         end

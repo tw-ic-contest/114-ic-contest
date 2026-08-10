@@ -2,7 +2,7 @@
 #RTL simulation
 #################
 vcs -R tb.v REFRACT.v -sverilog -full64 +define+RI=5 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb  -y /usr/cad/synopsys/synthesis/cur/dw/sim_ver +incdir+/usr/cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v -debug_access+
-
+vcs -R -full64 -sverilog tb_1.v REFRACT_syn.v +maxdelays +define+SDF +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+geofence.fsdb -v /home/raid7_2/course/cvsd/CBDK_IC_Contest/CIC/Verilog/tsmc13_neg.v -y /usr/cad/synopsys/synthesis/cur/dw/sim_ver +incdir+/usr/cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v
 # vcs -R  tb.v REFRACT.v +define+RI=2 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb  -y /cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v
 # vcs -R  tb.v REFRACT.v +define+RI=3 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb  -y /cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v 
 # vcs -R  tb.v REFRACT.v +define+RI=4 +access+r +vcs+fsdbon +fsdb+mda +fsdbfile+REFRACT.fsdb  -y /cad/synopsys/synthesis/cur/dw/sim_ver +libext+.v 
